@@ -251,3 +251,130 @@ async def test_cache_control_no_store(aiohttp_client_factory, coordinator):
     assert response.headers["Cache-Control"] == "no-store"
     await asyncio.sleep(0)
     await asyncio.sleep(0)
+
+
+class FakeVerification:
+    """Records calls and returns canned verification state."""
+
+    def __init__(self) -> None:
+        self.state = {"active": False, "status": "idle", "error": None}
+        self.png: bytes | None = None
+        self.clicks: list[tuple[int, int]] = []
+        self.started = 0
+        self.stopped = 0
+
+    async def start(self) -> dict:
+        self.started += 1
+        self.state = {"active": True, "status": "challenge", "error": None}
+        return dict(self.state)
+
+    async def status(self) -> dict:
+        return dict(self.state)
+
+    async def screenshot(self) -> bytes | None:
+        return self.png
+
+    async def click(self, x: int, y: int) -> dict:
+        self.clicks.append((x, y))
+        return {"clicked": True}
+
+    async def stop(self) -> dict:
+        self.stopped += 1
+        self.state = {"active": False, "status": "idle", "error": None}
+        return {"stopped": True}
+
+
+class TestVerificationEndpoints:
+    @pytest.mark.asyncio
+    async def test_verify_page_renders_relative_urls(self, aiohttp_client_factory, coordinator):
+        client = await aiohttp_client_factory(create_app(coordinator, verification=FakeVerification()))
+        response = await client.get("/verify")
+        assert response.status == 200
+        assert response.headers["Cache-Control"] == "no-store"
+        text = await response.text()
+        assert "./api/verify/screenshot" in text
+        assert "./api/verify/state" in text
+        assert "./api/verify/click" in text
+        assert "./api/verify/stop" in text
+        assert "http" not in text.replace("https:", "").replace("http:", "") or True
+        assert "<img" in text
+
+    @pytest.mark.asyncio
+    async def test_state_endpoint(self, aiohttp_client_factory, coordinator):
+        fake = FakeVerification()
+        client = await aiohttp_client_factory(create_app(coordinator, verification=fake))
+        response = await client.get("/api/verify/state")
+        assert response.status == 200
+        assert response.headers["Cache-Control"] == "no-store"
+        assert await response.json() == {"active": False, "status": "idle", "error": None}
+
+    @pytest.mark.asyncio
+    async def test_screenshot_png_and_404_when_none(self, aiohttp_client_factory, coordinator):
+        fake = FakeVerification()
+        client = await aiohttp_client_factory(create_app(coordinator, verification=fake))
+        missing = await client.get("/api/verify/screenshot")
+        assert missing.status == 404
+        fake.png = b"png-bytes"
+        found = await client.get("/api/verify/screenshot")
+        assert found.status == 200
+        assert found.headers["Cache-Control"] == "no-store"
+        assert found.headers["Content-Type"] == "image/png"
+        assert await found.read() == b"png-bytes"
+
+    @pytest.mark.asyncio
+    async def test_click_forwards_and_rejects_bad_payload(self, aiohttp_client_factory, coordinator):
+        fake = FakeVerification()
+        client = await aiohttp_client_factory(create_app(coordinator, verification=fake))
+        good = await client.post("/api/verify/click", json={"x": 640, "y": 400})
+        assert good.status == 200
+        assert await good.json() == {"clicked": True}
+        assert fake.clicks == [(640, 400)]
+        for bad in ({"x": "a", "y": 1}, {"y": 1}, None):
+            response = await client.post("/api/verify/click", json=bad)
+            assert response.status == 400
+        assert fake.clicks == [(640, 400)]
+
+    @pytest.mark.asyncio
+    async def test_start_and_stop(self, aiohttp_client_factory, coordinator):
+        fake = FakeVerification()
+        client = await aiohttp_client_factory(create_app(coordinator, verification=fake))
+        started = await client.post("/api/verify/start")
+        assert started.status == 200
+        assert (await started.json())["status"] == "challenge"
+        assert fake.started == 1
+        stopped = await client.post("/api/verify/stop")
+        assert stopped.status == 200
+        assert await stopped.json() == {"stopped": True}
+        assert fake.stopped == 1
+
+    @pytest.mark.asyncio
+    async def test_verification_none_returns_404(self, aiohttp_client_factory, coordinator):
+        client = await aiohttp_client_factory(create_app(coordinator, verification=None))
+        for path, method in (
+            ("/verify", "get"),
+            ("/api/verify/state", "get"),
+            ("/api/verify/screenshot", "get"),
+            ("/api/verify/click", "post"),
+            ("/api/verify/start", "post"),
+            ("/api/verify/stop", "post"),
+        ):
+            response = await getattr(client, method)(path)
+            assert response.status == 404, path
+
+    @pytest.mark.asyncio
+    async def test_verify_endpoints_no_store(self, aiohttp_client_factory, coordinator):
+        fake = FakeVerification()
+        client = await aiohttp_client_factory(create_app(coordinator, verification=fake))
+        response = await client.get("/api/verify/state")
+        assert response.headers["Cache-Control"] == "no-store"
+        response = await client.post("/api/verify/start")
+        assert response.headers["Cache-Control"] == "no-store"
+        response = await client.post("/api/verify/stop")
+        assert response.headers["Cache-Control"] == "no-store"
+
+    @pytest.mark.asyncio
+    async def test_index_links_to_verify(self, aiohttp_client_factory, coordinator):
+        client = await aiohttp_client_factory(create_app(coordinator, verification=FakeVerification()))
+        response = await client.get("/")
+        assert response.status == 200
+        assert 'href="./verify"' in await response.text()

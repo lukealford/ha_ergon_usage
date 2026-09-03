@@ -11,7 +11,7 @@ from aiohttp import web
 
 from .config import Settings
 from .coordinator import Coordinator
-from .ergon import ErgonClient, WafTokenStore
+from .ergon import ErgonClient, VerificationManager, WafTokenStore
 from .home_assistant import HomeAssistantClient
 from .ledger import Ledger
 from .logging_utils import SecretRedactionFilter
@@ -59,8 +59,11 @@ async def async_main() -> None:
         ergon = ErgonClient(settings, waf_store=waf_store)
         home_assistant = HomeAssistantClient(settings)
         coordinator = Coordinator(settings, ergon, ledger, home_assistant)
+        # Interactive WAF-verification manager: lets the owner solve the
+        # captcha through the ingress UI when the headless run is blocked.
+        verification = VerificationManager(settings, waf_store)
 
-        app = create_app(coordinator)
+        app = create_app(coordinator, verification=verification)
         runner = web.AppRunner(app)
         await runner.setup()
         site = web.TCPSite(runner, _BIND_HOST, _BIND_PORT)

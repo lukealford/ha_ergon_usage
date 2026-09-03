@@ -173,14 +173,75 @@ def render_index(payload: dict[str, Any]) -> str:
         + "<h2>Error</h2><p>"
         + (html.escape(str(error)) if error else "None")
         + "</p>"
+        + "<p>WAF verification: <a href=\"./verify\">open viewer</a> "
+        "<span id=\"verify-state\"></span></p>"
         '<form method="post" action="./api/run">'
         '<button type="submit">Run now</button></form>'
         "</body></html>"
     )
 
 
-def create_app(coordinator: Any) -> web.Application:
-    """Build the aiohttp application for ingress access."""
+def render_verify_page() -> str:
+    """Interactive WAF-verification viewer (relative URLs only)."""
+
+    return (
+        "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+        "<title>WAF verification</title></head><body>"
+        "<h1>WAF verification</h1>"
+        "<p id=\"state\">Loading…</p>"
+        "<img id=\"shot\" alt=\"Portal screenshot\" width=\"640\" height=\"400\""
+        " src=\"./api/verify/screenshot\">"
+        "<form method=\"post\" action=\"./api/verify/stop\">"
+        "<button type=\"submit\">Stop</button></form>"
+        "<script>"
+        "const VIEW_W = 1280, VIEW_H = 800;"
+        "async function refreshState() {"
+        "  try {"
+        "    const r = await fetch('./api/verify/state', {cache: 'no-store'});"
+        "    const s = await r.json();"
+        "    document.getElementById('state').textContent ="
+        "      'Status: ' + s.status + (s.error ? ' — ' + s.error : '');"
+        "    if (s.status === 'done') {"
+        "      document.getElementById('shot').src = '';"
+        "      return;"
+        "    }"
+        "  } catch (e) {}"
+        "  setTimeout(refreshState, 700);"
+        "}"
+        "async function refreshShot() {"
+        "  try {"
+        "    const r = await fetch('./api/verify/state', {cache: 'no-store'});"
+        "    const s = await r.json();"
+        "    if (s.status === 'challenge' || s.status === 'signin') {"
+        "      document.getElementById('shot').src ="
+        "        './api/verify/screenshot?t=' + Date.now();"
+        "    }"
+        "  } catch (e) {}"
+        "  setTimeout(refreshShot, 700);"
+        "}"
+        "document.getElementById('shot').addEventListener('click', async (ev) => {"
+        "  const img = ev.target;"
+        "  const rect = img.getBoundingClientRect();"
+        "  const x = Math.round((ev.clientX - rect.left) / rect.width * VIEW_W);"
+        "  const y = Math.round((ev.clientY - rect.top) / rect.height * VIEW_H);"
+        "  try {"
+        "    await fetch('./api/verify/click', {method: 'POST',"
+        "      headers: {'Content-Type': 'application/json'},"
+        "      body: JSON.stringify({x: x, y: y})});"
+        "  } catch (e) {}"
+        "});"
+        "refreshState(); refreshShot();"
+        "</script></body></html>"
+    )
+
+
+def create_app(coordinator: Any, verification: Any = None) -> web.Application:
+    """Build the aiohttp application for ingress access.
+
+    ``verification`` is a VerificationManager (or compatible); when None the
+    /verify viewer and its endpoints return 404.
+    """
 
     app = web.Application()
     app[web.AppKey("coordinator", object)] = coordinator
@@ -208,8 +269,50 @@ def create_app(coordinator: Any) -> web.Application:
     async def health(request: web.Request) -> web.Response:
         return _no_store(web.json_response({"ok": True}))
 
+    async def verify_page(request: web.Request) -> web.Response:
+        return _no_store(
+            web.Response(text=render_verify_page(), content_type="text/html")
+        )
+
+    async def verify_state(request: web.Request) -> web.Response:
+        state = await verification.status()
+        return _no_store(web.json_response(state))
+
+    async def verify_screenshot(request: web.Request) -> web.StreamResponse:
+        png = await verification.screenshot()
+        if png is None:
+            return _no_store(web.Response(status=404))
+        return _no_store(
+            web.Response(body=png, content_type="image/png")
+        )
+
+    async def verify_click(request: web.Request) -> web.Response:
+        try:
+            payload = await request.json()
+            x = int(payload["x"])
+            y = int(payload["y"])
+        except Exception:  # noqa: BLE001 - malformed bodies rejected uniformly
+            return _no_store(web.json_response({"error": "invalid"}, status=400))
+        result = await verification.click(x, y)
+        return _no_store(web.json_response(result))
+
+    async def verify_start(request: web.Request) -> web.Response:
+        state = await verification.start()
+        return _no_store(web.json_response(state))
+
+    async def verify_stop(request: web.Request) -> web.Response:
+        result = await verification.stop()
+        return _no_store(web.json_response(result))
+
     app.router.add_get("/", index)
     app.router.add_get("/api/status", status)
     app.router.add_post("/api/run", run_now)
     app.router.add_get("/health", health)
+    if verification is not None:
+        app.router.add_get("/verify", verify_page)
+        app.router.add_get("/api/verify/state", verify_state)
+        app.router.add_get("/api/verify/screenshot", verify_screenshot)
+        app.router.add_post("/api/verify/click", verify_click)
+        app.router.add_post("/api/verify/start", verify_start)
+        app.router.add_post("/api/verify/stop", verify_stop)
     return app
