@@ -19,7 +19,9 @@ _TIMESTAMP_FORMATS = (
     "%d/%m/%Y %I:%M %p",
 )
 
-ACCOUNT_RE = re.compile(r"/portal/(A-[A-Za-z0-9]+)/")
+# The live portal links accounts as "/portal/A-XXXX" (no trailing slash);
+# accept both forms.
+ACCOUNT_RE = re.compile(r"/portal/(A-[A-Za-z0-9]+)(?:/|(?![\w-]))")
 
 
 def parse_brisbane_timestamp(value: str, requested_day: date | None = None) -> datetime:
