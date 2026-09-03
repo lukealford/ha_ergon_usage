@@ -150,9 +150,21 @@ def main(argv: list[str] | None = None) -> int:
 
     async def run() -> dict:
         result = await client.fetch_day(day)
+        rates = await client.fetch_rates()
         return {
             "day": day.isoformat(),
             "source": result.source,
+            "rates": {
+                rate.tariff: {
+                    "per_kwh_aud": str(rate.per_kwh_aud),
+                    "daily_supply_aud": (
+                        str(rate.daily_supply_aud)
+                        if rate.daily_supply_aud is not None
+                        else None
+                    ),
+                }
+                for rate in rates
+            },
             "readings": [
                 {
                     "tariff": reading.tariff,
