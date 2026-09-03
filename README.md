@@ -28,7 +28,7 @@ used here.
 
 1. In Home Assistant, open **Settings → Add-ons → Add-on Store**.
 2. Open the top-right menu and choose **Repositories** and add
-   `https://github.com/lukealford/ergon_usage`.
+   `https://github.com/lukealford/ha_ergon_usage`.
 3. Refresh the store, find **Ergon Usage**, and click **Install**.
 
 The add-on lives at the root of the repository (single add-on layout), so the
