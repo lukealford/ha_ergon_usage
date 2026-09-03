@@ -272,7 +272,7 @@ class TestFetchRolling:
         assert rolling_url() in scenario.navigations
 
     @pytest.mark.asyncio
-    async def test_chart_path_used_when_xhr_yields_nothing(self):
+    async def test_chart_path_used_when_xhr_yields_nothing(self, monkeypatch):
         scenario = Scenario()
         # XHR captures an invalid payload; the Recharts evaluate returns
         # real hourly rows instead.
@@ -300,7 +300,7 @@ class TestFetchRolling:
         }
 
     @pytest.mark.asyncio
-    async def test_dom_fallback_when_no_valid_json(self):
+    async def test_dom_fallback_when_no_valid_json(self, monkeypatch):
         scenario = Scenario()
         scenario.usage_responses = [
             usage_json_response(payload={"series": [{"name": "Tariff 11", "data": []}]})
