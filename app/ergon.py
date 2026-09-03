@@ -10,6 +10,7 @@ installed.  Tests inject a ``browser_factory`` and never import playwright.
 """
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -233,6 +234,8 @@ class ErgonClient:
                 # while the page is open (returns [] on any failure).  Also
                 # capture the shape count so a failed read is self-describing.
                 chart_rows = await _read_chart_payloads(page)
+                if chart_rows:
+                    logger.info("Chart payload read: %d rows.", len(chart_rows))
                 try:
                     chart_shape_count = await page.evaluate(
                         "document.querySelectorAll('.recharts-bar-rectangle path,"
@@ -240,6 +243,30 @@ class ErgonClient:
                     )
                 except Exception:  # noqa: BLE001
                     chart_shape_count = -1
+                if not chart_rows and chart_shape_count:
+                    # Self-describing failure: dump the FIRST shape's React
+                    # key names and its prop keys (names only — no values).
+                    debug = await page.evaluate(
+                        """() => {
+                            const shape = document.querySelector(
+                                '.recharts-bar-rectangle path, .recharts-bar-rectangle rect');
+                            if (!shape) return {noShape: true};
+                            const out = {keys: Object.keys(shape).map(k => k.slice(0, 24))};
+                            for (const k of Object.keys(shape)) {
+                                if (!k.startsWith('__react')) continue;
+                                let node = shape[k];
+                                const hops = [];
+                                for (let hop = 0; hop < 8 && node; hop++) {
+                                    const props = node.memoizedProps || node.pendingProps;
+                                    hops.push(props ? Object.keys(props).slice(0, 12) : null);
+                                    node = node.return || node.alternate || null;
+                                }
+                                out[k.slice(0, 20)] = hops;
+                            }
+                            return out;
+                        }"""
+                    )
+                    logger.info("Chart debug: %s", json.dumps(debug)[:800])
             finally:
                 await page.close()
         return _resolve_readings(
