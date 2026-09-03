@@ -3,7 +3,8 @@
 Securely collect and view Ergon Electricity electricity usage in Home Assistant.
 
 The add-on logs in to the Ergon Energy customer portal with Playwright, discovers
-your account and tariffs, fetches current rates, rolling 12-hour usage, and
+your account and tariffs, fetches current rates, the rolling three-day usage
+view, and
 historical usage, then imports the results into Home Assistant as long-term
 statistics. A built-in web panel (via ingress) shows account, tariff, rate, and
 sync status — never your credentials.
@@ -69,9 +70,9 @@ This prevents an unverified parser from making hundreds of requests.
 ## Cost boundaries
 
 Cost statistics begin only at the first observed rate boundary for each tariff —
-rates are only known from the moment the portal exposes them. The historical
-backfill imports **energy only**; backfilled periods are **not costed**.
-
+  rates are only known from the moment the portal exposes them. Backfilled
+  readings after that boundary **are costed**; usage earlier than the first
+  observed rate remains energy-only.
 ## Status UI
 
 The add-on's ingress panel (Sidebar → Ergon Usage) shows the discovered
