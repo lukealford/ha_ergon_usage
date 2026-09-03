@@ -41,7 +41,7 @@ TARIFF_HTML = (FIXTURES / "tariff_page.html").read_text(encoding="utf-8").replac
     "",
 )
 
-LOGIN_URL = "https://login.myaccount.ergonretail.com.au/"
+LOGIN_URL = "https://myaccount.ergonretail.com.au/portal"
 PORTAL_URL = "https://myaccount.ergonretail.com.au/portal/A-TEST123/dashboard"
 TARIFF_URL = "https://myaccount.ergonretail.com.au/portal/A-TEST123/tariff-metering"
 
@@ -122,6 +122,16 @@ class FakePage:
         self.scenario.navigations.append(f"click:{selector}")
         # Real Playwright click() resolves when navigation starts, NOT when
         # it completes, so page.url is deliberately NOT updated here.
+
+    async def wait_for_selector(self, _selector: str, timeout=None) -> None:
+        # The login form renders shortly after domcontentloaded; the fake
+        # always has inputs available, so this returns immediately.
+        return
+
+    async def wait_for_selector(self, _selector: str, timeout=None) -> None:
+        # The login form renders shortly after domcontentloaded; the fake
+        # always has inputs available, so this returns immediately.
+        return
 
     async def wait_for_url(self, _pattern: str, timeout=None) -> None:
         self.scenario.waited_for_url += 1
@@ -230,7 +240,8 @@ class TestFetchRolling:
         assert scenario.pages_closed == scenario.pages_created > 0
         assert scenario.context_closed
         assert scenario.browser_closed
-        # Login page visited first.
+        # Portal visited first; unauthenticated visitors are redirected to
+        # the auth sign-in page.
         assert scenario.navigations[0] == LOGIN_URL
 
     @pytest.mark.asyncio

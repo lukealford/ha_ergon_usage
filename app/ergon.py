@@ -31,6 +31,13 @@ TARIFF_URL_TEMPLATE = PORTAL_BASE + "/{account}/tariff-metering"
 # Bounded wait (ms) for the portal to load after submitting credentials.
 LOGIN_WAIT_MS = 15_000
 
+# Bot protection rejects Playwright's default "HeadlessChrome" UA.  This UA
+# matches the Chromium version Playwright ships with, minus the headless tag.
+REALISTIC_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
+)
+
 # Ordered, explicit selectors for the login form.  The portal's inputs are
 # only distinguishable by their aria-labels ("Email Address" / "Password"),
 # so those come first, with type/name/id fallbacks.  The first selector that
@@ -165,7 +172,12 @@ class _AuthenticatedRun:
         self._opener = self._browser_factory(self._settings)
         self._browser = await self._opener.__aenter__()
         try:
-            self._context = await self._browser.new_context()
+            # The portal's bot protection (Cloudflare/AWS WAF) rejects
+            # Playwright's default "HeadlessChrome" user agent outright.
+            # Present a normal Chrome UA on the same engine version.
+            self._context = await self._browser.new_context(
+                user_agent=REALISTIC_USER_AGENT
+            )
             page = await self._context.new_page()
             try:
                 await self._login(page)
@@ -201,7 +213,14 @@ class _AuthenticatedRun:
             self._opener = None
 
     async def _login(self, page) -> None:
-        await page.goto(LOGIN_URL, wait_until="domcontentloaded")
+        # Navigate to the portal; unauthenticated visitors are redirected to
+        # the auth sign-in page (confirmed live: /portal ->
+        # /auth/signin?callbackUrl=/portal).
+        await page.goto(PORTAL_BASE, wait_until="domcontentloaded")
+        try:
+            await page.wait_for_selector("input", timeout=LOGIN_WAIT_MS)
+        except Exception:  # noqa: BLE001 - challenge or blocked page
+            raise AuthenticationError() from None
         email_selector = await _first_visible(page, EMAIL_SELECTORS)
         password_selector = await _first_visible(page, PASSWORD_SELECTORS)
         await page.fill(email_selector, self._settings.ergon_email)
