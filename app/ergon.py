@@ -95,8 +95,7 @@ _RECHARTS_PAYLOAD_JS = """
           seen.add(payload.day);
           rows.push(payload);
         }
-        fiber = fiber.return || fiber.alternate;
-        if (fiber && fiber.return) fiber = fiber.return;
+        fiber = fiber.return;
       }
     }
   }
@@ -213,6 +212,16 @@ class ErgonClient:
                         break
                     await asyncio.sleep(min(0.25, remaining))
                 await page.wait_for_timeout(1_000)
+                # The chart renders asynchronously after load; wait for bar
+                # shapes before reading React props (bounded, best-effort —
+                # a non-usage page simply times out).
+                try:
+                    await page.wait_for_selector(
+                        ".recharts-bar-rectangle", timeout=15_000
+                    )
+                    await page.wait_for_timeout(1_000)
+                except Exception:  # noqa: BLE001 - not a chart page
+                    pass
                 html = await page.content()
                 # The live portal renders usage as a Recharts chart; hourly
                 # rows live in the React props of each bar shape.  Read them
