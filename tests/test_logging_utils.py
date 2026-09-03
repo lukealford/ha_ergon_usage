@@ -1,6 +1,6 @@
 import logging
 
-from ergon_usage.app.logging_utils import SecretRedactionFilter
+from app.logging_utils import SecretRedactionFilter
 
 
 def test_redacts_direct_message_text_and_clears_arguments() -> None:

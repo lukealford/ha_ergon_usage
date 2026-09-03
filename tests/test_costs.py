@@ -4,8 +4,8 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-from ergon_usage.app.costs import calculate_costs, cost_statistic_points
-from ergon_usage.app.models import (
+from app.costs import calculate_costs, cost_statistic_points
+from app.models import (
     CostComponent,
     RatePeriod,
     TariffRate,
@@ -34,7 +34,7 @@ def rate(
     per_kwh: str = "0.25",
     daily: str | None = None,
 ) -> RatePeriod:
-    from ergon_usage.app.normalize import (
+    from app.normalize import (
         effective_supply_boundary,
         effective_usage_boundary,
     )

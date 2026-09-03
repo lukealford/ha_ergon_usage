@@ -3,9 +3,9 @@ from decimal import Decimal
 
 import pytest
 
-from ergon_usage.app.errors import AccountDiscoveryError
-from ergon_usage.app.models import StatisticPoint, TariffRate, UsageReading
-from ergon_usage.app.normalize import (
+from app.errors import AccountDiscoveryError
+from app.models import StatisticPoint, TariffRate, UsageReading
+from app.normalize import (
     discover_single_account,
     effective_supply_boundary,
     effective_usage_boundary,
@@ -86,7 +86,7 @@ def test_timestamp_formats_are_strict_and_invalid_values_rejected():
 
 
 def test_timestamp_can_be_checked_against_requested_brisbane_day():
-    from ergon_usage.app.normalize import parse_brisbane_timestamp_for_day
+    from app.normalize import parse_brisbane_timestamp_for_day
 
     parse_brisbane_timestamp_for_day("31 Aug 2026 07:00PM", date(2026, 8, 31))
     with pytest.raises(ValueError):

@@ -7,8 +7,8 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from ergon_usage.app.errors import ExtractionError
-from ergon_usage.app.tariff_rates import extract_tariff_rates
+from app.errors import ExtractionError
+from app.tariff_rates import extract_tariff_rates
 
 BRISBANE = ZoneInfo("Australia/Brisbane")
 FIXTURE = Path(__file__).parent / "fixtures" / "tariff_page.html"

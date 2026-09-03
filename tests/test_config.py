@@ -4,9 +4,9 @@ from pathlib import Path
 import pytest
 import yaml
 
-from ergon_usage.app.config import Settings
-from ergon_usage.app import config as config_module
-from ergon_usage.app.errors import (
+from app.config import Settings
+from app import config as config_module
+from app.errors import (
     AccountDiscoveryError,
     AuthenticationError,
     ErgonError,
@@ -178,11 +178,9 @@ def test_base_domain_error_retains_its_safe_contract() -> None:
 
 
 def test_addon_metadata_declares_the_required_safe_configuration() -> None:
-    root = Path(__file__).parents[2]
-    repository = yaml.safe_load((root / "repository.yaml").read_text(encoding="utf-8"))
-    config = yaml.safe_load((root / "ergon_usage" / "config.yaml").read_text(encoding="utf-8"))
+    root = Path(__file__).parents[1]
+    config = yaml.safe_load((root / "config.yaml").read_text(encoding="utf-8"))
 
-    assert repository["name"] == "Ergon Usage Add-ons"
     assert config["ingress"] is True
     assert config["ingress_port"] == 8099
     assert config["homeassistant_api"] is True

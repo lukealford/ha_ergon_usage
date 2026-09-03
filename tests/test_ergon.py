@@ -24,13 +24,13 @@ from pathlib import Path
 
 import pytest
 
-from ergon_usage.app.errors import (
+from app.errors import (
     AccountDiscoveryError,
     AuthenticationError,
     ExtractionError,
 )
-from ergon_usage.app.ergon import ErgonClient, FetchResult
-from ergon_usage.app.models import TariffRate
+from app.ergon import ErgonClient, FetchResult
+from app.models import TariffRate
 
 FIXTURES = Path(__file__).parent / "fixtures"
 STRUCTURED_PAYLOAD = json.loads(

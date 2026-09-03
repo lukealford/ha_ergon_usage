@@ -10,13 +10,13 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from ergon_usage.app.coordinator import Coordinator
-from ergon_usage.app.errors import AuthenticationError, ExtractionError
-from ergon_usage.app.errors import ImportError as ErgonImportError
-from ergon_usage.app.ergon import FetchResult
-from ergon_usage.app.ledger import Ledger
-from ergon_usage.app.models import TariffRate, UsageReading
-from ergon_usage.app.normalize import BRISBANE, effective_usage_boundary
+from app.coordinator import Coordinator
+from app.errors import AuthenticationError, ExtractionError
+from app.errors import ImportError as ErgonImportError
+from app.ergon import FetchResult
+from app.ledger import Ledger
+from app.models import TariffRate, UsageReading
+from app.normalize import BRISBANE, effective_usage_boundary
 
 UTC = timezone.utc
 

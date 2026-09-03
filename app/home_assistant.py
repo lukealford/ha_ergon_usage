@@ -10,8 +10,8 @@ from typing import Sequence
 
 import aiohttp
 
-from ergon_usage.app.errors import ImportError
-from ergon_usage.app.models import StatisticPoint
+from app.errors import ImportError
+from app.models import StatisticPoint
 
 _LOGGER = logging.getLogger(__name__)
 

@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from ergon_usage.app.errors import ExtractionError
-from ergon_usage.app.extractor import (
+from app.errors import ExtractionError
+from app.extractor import (
     CapturedJson,
     extract_dom,
     extract_structured,

@@ -14,10 +14,10 @@ jobs:
           python-version: "3.13"
       - name: Install dependencies
         run: |
-          pip install -r ergon_usage/requirements.txt -r ergon_usage/requirements-dev.txt
+          pip install -r requirements.txt -r requirements-dev.txt
       - name: Run tests
-        run: python -m pytest ergon_usage/tests -q
+        run: python -m pytest tests -q
         working-directory: .
       - name: Byte-compile application package
-        run: python -m compileall -q ergon_usage/app
+        run: python -m compileall -q app
         working-directory: .

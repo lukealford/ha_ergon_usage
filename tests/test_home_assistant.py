@@ -11,9 +11,9 @@ import pytest_asyncio
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 
-from ergon_usage.app.errors import ImportError as ErgonImportError
-from ergon_usage.app.home_assistant import HomeAssistantClient, StatisticMetadata
-from ergon_usage.app.models import StatisticPoint
+from app.errors import ImportError as ErgonImportError
+from app.home_assistant import HomeAssistantClient, StatisticMetadata
+from app.models import StatisticPoint
 
 TOKEN = "super-secret-supervisor-token"
 

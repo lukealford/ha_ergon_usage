@@ -4,8 +4,7 @@ from pathlib import Path
 
 import yaml
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-ADDON_DIR = REPO_ROOT / "ergon_usage"
+ADDON_DIR = Path(__file__).resolve().parents[1]
 
 
 def _read(relative: str) -> str:
@@ -68,15 +67,8 @@ def test_run_sh_execs_entrypoint_with_safety_flags():
     assert "exec python -m app.main" in run_sh
 
 
-def test_repository_yaml_has_name_url_maintainer():
-    repository = yaml.safe_load((REPO_ROOT / "repository.yaml").read_text(encoding="utf-8"))
-    assert repository["name"]
-    assert repository["url"].startswith("https://")
-    assert repository["maintainer"]
-
-
 def test_ci_workflow_runs_pytest_and_compileall():
-    workflow = (REPO_ROOT / ".github" / "workflows" / "test.yml").read_text(encoding="utf-8")
+    workflow = (ADDON_DIR / ".github" / "workflows" / "test.yml").read_text(encoding="utf-8")
     assert "pytest" in workflow
     assert "compileall" in workflow
 

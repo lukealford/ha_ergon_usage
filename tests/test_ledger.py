@@ -3,8 +3,8 @@ from decimal import Decimal
 
 import pytest
 
-from ergon_usage.app.ledger import Ledger
-from ergon_usage.app.models import CostComponent, RatePeriod, StatisticPoint, TariffRate, UsageReading
+from app.ledger import Ledger
+from app.models import CostComponent, RatePeriod, StatisticPoint, TariffRate, UsageReading
 
 
 ACCOUNT = "A-TEST"

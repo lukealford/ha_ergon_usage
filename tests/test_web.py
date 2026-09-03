@@ -9,10 +9,10 @@ import pytest
 import pytest_asyncio
 from aiohttp.test_utils import TestClient, TestServer
 
-from ergon_usage.app.coordinator import Coordinator
-from ergon_usage.app.ledger import Ledger
-from ergon_usage.app.web import create_app  # noqa: E402
-from ergon_usage.tests.test_coordinator import (  # noqa: E402
+from app.coordinator import Coordinator
+from app.ledger import Ledger
+from app.web import create_app  # noqa: E402
+from tests.test_coordinator import (  # noqa: E402
     FakeErgon,
     FakeHA,
     FakeSettings,

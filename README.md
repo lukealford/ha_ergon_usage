@@ -31,6 +31,10 @@ used here.
    `https://github.com/lukealford/ergon_usage`.
 3. Refresh the store, find **Ergon Usage**, and click **Install**.
 
+The add-on lives at the root of the repository (single add-on layout), so the
+store discovers it directly from the repository URL; no subfolder selection is
+needed.
+
 (If you have the repository checked out on the Home Assistant machine, you can
 add the local path as a repository instead.)
 
