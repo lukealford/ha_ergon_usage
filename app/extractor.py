@@ -316,4 +316,23 @@ def extract_chart_payloads(
                     kwh=Decimal(str(raw_value)),
                 )
             )
+    if requested_day is not None and not readings:
+        # Every row was filtered out by the day boundary: surface the row
+        # range so the mismatch is diagnosable from the error alone.
+        parsed_days = []
+        for row in rows:
+            if isinstance(row, Mapping) and row.get("day"):
+                try:
+                    parsed_days.append(_parse_chart_day(row.get("day")))
+                except ExtractionError:
+                    continue
+        if parsed_days:
+            span = (
+                f"{min(parsed_days).isoformat()} .. {max(parsed_days).isoformat()}"
+                f" UTC ({len(parsed_days)} rows)"
+            )
+            raise ExtractionError(
+                "No usage readings found for the requested Brisbane day. "
+                f"Chart rows span: {span}; requested Brisbane day: {requested_day}."
+            )
     return _require_readings(readings)
