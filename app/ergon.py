@@ -98,7 +98,9 @@ class ErgonClient:
         self._settings = settings
         if browser_factory is None:
             self._headful = headful
-            browser_factory = _default_browser_factory
+            browser_factory = lambda settings: _default_browser_factory(
+                settings, headful=headful
+            )
         else:
             # Injected factories manage their own launch options.
             self._headful = False
