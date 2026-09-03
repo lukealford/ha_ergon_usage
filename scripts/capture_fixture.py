@@ -16,8 +16,8 @@ Redaction rules (see ``redact_payload``):
 - Numbers, timestamps, and other keys pass through untouched.
 
 Usage:
-    python -m ergon_usage.scripts.capture_fixture 2026-08-31 out.json
-    python -m ergon_usage.scripts.capture_fixture 2026-08-31 out.json --replace
+    python -m scripts.capture_fixture 2026-08-31 out.json
+    python -m scripts.capture_fixture 2026-08-31 out.json --replace
 """
 
 import argparse
@@ -30,8 +30,8 @@ from datetime import date
 from pathlib import Path
 from typing import Mapping
 
-from ergon_usage.app.config import Settings
-from ergon_usage.app.ergon import ErgonClient
+from app.config import Settings
+from app.ergon import ErgonClient
 
 _REDACT_RE = re.compile(
     r"account|customer|email|address|name|token|cookie|session", re.IGNORECASE
