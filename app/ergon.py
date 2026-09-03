@@ -599,9 +599,13 @@ async def _read_chart_payloads(page) -> list[dict]:
                 payload = item.get("payload")
                 if isinstance(payload, dict):
                     series = item.get("series")
+                    data_key = item.get("dataKey")
                     rows.append(
                         {
                             "series": series if isinstance(series, str) else None,
+                            "dataKey": data_key
+                            if isinstance(data_key, str)
+                            else None,
                             "payload": payload,
                         }
                     )
