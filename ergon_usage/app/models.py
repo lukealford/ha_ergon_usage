@@ -78,3 +78,41 @@ class StatisticPoint:
         object.__setattr__(self, "start", _utc_datetime(self.start, "start"))
         object.__setattr__(self, "sum", _decimal(self.sum, "sum"))
         object.__setattr__(self, "state", _decimal(self.state, "state", allow_none=True))
+
+
+@dataclass(frozen=True, slots=True)
+class RatePeriod:
+    """A tariff rate whose effective boundaries have already been determined."""
+
+    account_id: str
+    tariff: str
+    usage_effective_at: datetime
+    supply_effective_at: datetime
+    per_kwh_aud: Decimal
+    daily_supply_aud: Decimal
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "account_id", _text(self.account_id, "account_id"))
+        object.__setattr__(self, "tariff", _text(self.tariff, "tariff"))
+        object.__setattr__(self, "usage_effective_at", _utc_datetime(self.usage_effective_at, "usage_effective_at"))
+        object.__setattr__(self, "supply_effective_at", _utc_datetime(self.supply_effective_at, "supply_effective_at"))
+        object.__setattr__(self, "per_kwh_aud", _decimal(self.per_kwh_aud, "per_kwh_aud"))
+        object.__setattr__(self, "daily_supply_aud", _decimal(self.daily_supply_aud, "daily_supply_aud"))
+
+
+@dataclass(frozen=True, slots=True)
+class CostComponent:
+    """The calculated usage and supply cost assigned to one interval."""
+
+    account_id: str
+    tariff: str
+    interval_start: datetime
+    usage_aud: Decimal
+    supply_aud: Decimal
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "account_id", _text(self.account_id, "account_id"))
+        object.__setattr__(self, "tariff", _text(self.tariff, "tariff"))
+        object.__setattr__(self, "interval_start", _utc_datetime(self.interval_start, "interval_start"))
+        object.__setattr__(self, "usage_aud", _decimal(self.usage_aud, "usage_aud"))
+        object.__setattr__(self, "supply_aud", _decimal(self.supply_aud, "supply_aud"))
