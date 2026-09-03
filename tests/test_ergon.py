@@ -81,6 +81,8 @@ class FakePage:
         self.filled: list[tuple[str, str]] = []
         self.clicked: list[str] = []
         self.listeners: list = []
+        self.evaluate_result: object = []
+        self.evaluate_calls: list[str] = []
         self.visible_selectors: set[str] = {
             'input[type="email"]',
             'input[type="password"]',
@@ -141,6 +143,12 @@ class FakePage:
 
     async def wait_for_timeout(self, _ms: int) -> None:
         return
+
+    async def evaluate(self, script: str) -> object:
+        """Default to no chart payloads so chart extraction is a no-op."""
+
+        self.evaluate_calls.append(script)
+        return self.evaluate_result
 
     async def content(self) -> str:
         return self.scenario.page_html
@@ -257,6 +265,35 @@ class TestFetchRolling:
         scenario.usage_responses = [usage_json_response()]
         await make_client(scenario).fetch_rolling()
         assert rolling_url() in scenario.navigations
+
+    @pytest.mark.asyncio
+    async def test_chart_path_used_when_xhr_yields_nothing(self):
+        scenario = Scenario()
+        # XHR captures an invalid payload; the Recharts evaluate returns
+        # real hourly rows instead.
+        scenario.usage_responses = [
+            usage_json_response(payload={"series": [{"name": "Tariff 11", "data": []}]})
+        ]
+
+        async def evaluate(self: FakePage, script: str) -> object:
+            self.evaluate_calls.append(script)
+            return [
+                {"date": "31 Aug 12:00AM", "day": "2026-08-30 14:00:00+00:00", "RTC11": 1.25},
+                {"date": "31 Aug 01:00AM", "day": "2026-08-30 15:00:00+00:00", "RTC11": 0.5, "RTC33": 0.75},
+            ]
+
+        FakePage.evaluate = evaluate  # type: ignore[method-assign]
+        try:
+            result = await make_client(scenario).fetch_rolling()
+        finally:
+            del FakePage.evaluate  # type: ignore[attr-defined]
+        assert result.source == "chart"
+        assert len(result.readings) == 3
+        assert {(r.tariff, r.kwh) for r in result.readings} == {
+            ("RTC11", Decimal("1.25")),
+            ("RTC11", Decimal("0.5")),
+            ("RTC33", Decimal("0.75")),
+        }
 
     @pytest.mark.asyncio
     async def test_dom_fallback_when_no_valid_json(self):

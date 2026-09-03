@@ -16,11 +16,12 @@ one candidate extracts successfully.
 """
 
 import math
+import re
 from dataclasses import dataclass
-from datetime import date
-from decimal import Decimal
+from datetime import date, datetime, timezone
+from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from .errors import ExtractionError
 from .models import UsageReading
@@ -206,3 +207,104 @@ def select_usage_payload(
             "successfully."
         )
     return valid[0]
+
+
+# Tariff series keys inside a Recharts bar ``payload`` are dynamic RTC codes
+# (e.g. ``RTC11`` / ``RTC33``).  They are never hard-coded; any key matching
+# this pattern (and not ``date`` / ``day``) is treated as a tariff series.
+_TARIFF_KEY_RE = re.compile(r"^RTC[A-Za-z0-9]+$", re.IGNORECASE)
+
+# The canonical ``day`` value is a UTC hour-start with a space separator
+# (``2026-08-31 14:00:00+00:00``); the ISO variants seen in the wild
+# (``2026-08-31T14:00:00.000Z``) are also accepted.
+_CHART_DAY_FORMATS = (
+    "%Y-%m-%d %H:%M:%S%z",
+    "%Y-%m-%dT%H:%M:%S.%f%z",
+    "%Y-%m-%dT%H:%M:%S%z",
+)
+
+
+def _parse_chart_day(value: object) -> datetime:
+    if not isinstance(value, str) or not value.strip():
+        raise ExtractionError("Chart payload 'day' must be a non-empty string.")
+    source = value.strip()
+    for fmt in _CHART_DAY_FORMATS:
+        try:
+            parsed = datetime.strptime(source, fmt)
+        except ValueError:
+            continue
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    raise ExtractionError(
+        f"Chart payload 'day' value {value!r} is not a supported UTC format."
+    )
+
+
+def extract_chart_payloads(
+    rows: Sequence[Mapping], account_id: str, requested_day: date | None
+) -> list[UsageReading]:
+    """Extract readings from Recharts bar-shape ``payload`` objects.
+
+    The live portal renders usage as a Recharts chart; each bar shape carries
+    a React ``payload`` dict holding one row per hour, e.g.::
+
+        {"date": "01 Sep 12:00AM", "day": "2026-08-31 14:00:00+00:00",
+         "RTC11": 1.094, "RTC33": 0.435}
+
+    Contract facts (verified live):
+    - ``day`` is the canonical UTC hour-start; 24 rows per day.
+    - Both tariff series appear on the SAME row; only nonzero tariffs have
+      keys, and keys are dynamic ``RTC*`` codes (never hard-coded here).
+    - The same row is observed once per rendered series shape, so rows are
+      deduplicated by (tariff, interval_start).
+
+    Tariff names use the raw RTC code (e.g. ``"RTC11"``) rather than the
+    chart's display name (``"Tariff 11"``): the ``series`` display name lives
+    on the per-shape element, not the shared row, so it cannot be joined
+    reliably to a row-level tariff key.
+    """
+
+    if not isinstance(rows, (list, tuple)) or not rows:
+        raise ExtractionError("Chart payload must be a non-empty list of rows.")
+
+    readings: list[UsageReading] = []
+    seen: set[tuple[str, object]] = set()
+    for row in rows:
+        if not isinstance(row, Mapping):
+            raise ExtractionError("Each chart payload row must be a JSON object.")
+        interval_start = _parse_chart_day(row.get("day"))
+        local_date = interval_start.astimezone(BRISBANE).date()
+        if requested_day is not None and local_date != requested_day:
+            continue
+        for key, raw_value in row.items():
+            if key in ("date", "day") or not isinstance(key, str):
+                continue
+            if not _TARIFF_KEY_RE.match(key):
+                continue
+            if raw_value is None:
+                continue
+            # Zero-valued tariff keys are omitted-by-zero rather than real
+            # readings: only nonzero tariffs carry keys on the live portal,
+            # so explicit zeros are treated as absent.
+            if isinstance(raw_value, (int, float)) and not isinstance(raw_value, bool) and raw_value == 0:
+                continue
+            try:
+                value = float(raw_value)  # type: ignore[arg-type]
+            except (TypeError, ValueError) as error:
+                raise ExtractionError("Usage value must be a number.") from error
+            if not math.isfinite(value) or value < 0:
+                raise ExtractionError("Usage value must be finite and not negative.")
+            dedup_key = (key, interval_start)
+            if dedup_key in seen:
+                continue
+            seen.add(dedup_key)
+            readings.append(
+                UsageReading(
+                    account_id=account_id,
+                    tariff=key,
+                    interval_start=interval_start,
+                    kwh=Decimal(str(raw_value)),
+                )
+            )
+    return _require_readings(readings)

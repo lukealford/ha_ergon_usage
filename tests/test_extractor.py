@@ -10,6 +10,7 @@ import pytest
 from app.errors import ExtractionError
 from app.extractor import (
     CapturedJson,
+    extract_chart_payloads,
     extract_dom,
     extract_structured,
     select_usage_payload,
@@ -117,6 +118,168 @@ def test_captured_json_keeps_all_response_metadata(fixture_json):
     assert candidate.payload is fixture_json
     with pytest.raises(FrozenInstanceError):
         candidate.status = 500
+
+
+# -- Recharts chart payload extraction ---------------------------------------
+
+
+@pytest.fixture
+def chart_rows():
+    return json.loads((FIXTURES / "chart_payloads.json").read_text(encoding="utf-8"))
+
+
+def make_chart_row(day: str, **tariffs: float | None) -> dict:
+    payload = {"date": "x", "day": day}
+    payload.update(tariffs)
+    return payload
+
+
+def full_day_rows(**fixed_tariffs) -> list[dict]:
+    """A full Brisbane day: UTC 14:00 (day-1) through 13:00 (same day)."""
+    return [
+        make_chart_row(
+            f"2026-08-{30 + (14 + hour) // 24:02d} {(14 + hour) % 24:02d}:00:00+00:00",
+            **fixed_tariffs,
+        )
+        for hour in range(24)
+    ]
+
+
+def test_chart_payloads_extract_both_tariffs_from_shared_rows(chart_rows):
+    rows = extract_chart_payloads(chart_rows, ACCOUNT_ID, REQUESTED_DAY)
+
+    assert {row.tariff for row in rows} == {"RTC11", "RTC33"}
+    assert {row.tariff for row in rows}.isdisjoint({"date", "day"})
+
+
+def test_chart_payloads_extract_24_hours_per_tariff():
+    rows = extract_chart_payloads(
+        full_day_rows(RTC11=1.0, RTC33=0.5), ACCOUNT_ID, REQUESTED_DAY
+    )
+
+    assert len(rows) == 48
+    assert {row.tariff for row in rows} == {"RTC11", "RTC33"}
+    for tariff in ("RTC11", "RTC33"):
+        starts = [r.interval_start for r in rows if r.tariff == tariff]
+        assert len({s.hour for s in starts}) == 24
+        assert all(s.astimezone(__import__("zoneinfo").ZoneInfo("Australia/Brisbane")).date() == REQUESTED_DAY for s in starts)
+
+
+def test_chart_payloads_skip_zero_and_absent_keys(chart_rows):
+    rows = extract_chart_payloads(chart_rows, ACCOUNT_ID, REQUESTED_DAY)
+
+    # Row 1: both nonzero. Row 2: RTC33 absent. Row 3: RTC33 == 0.
+    rtc33 = [r for r in rows if r.tariff == "RTC33"]
+    assert len(rtc33) == 1
+    assert rtc33[0].kwh == Decimal("0.435")
+    assert rtc33[0].interval_start == datetime(2026, 8, 30, 14, tzinfo=timezone.utc)
+
+
+def test_chart_payloads_use_utc_day_field_and_handle_iso_variants():
+    rows = extract_chart_payloads(
+        [
+            make_chart_row("2026-08-30 14:00:00+00:00", RTC11=1.0),
+            make_chart_row("2026-08-30T15:00:00.000Z", RTC11=2.0),
+            make_chart_row("2026-08-30T16:00:00Z", RTC11=3.0),
+        ],
+        ACCOUNT_ID,
+        REQUESTED_DAY,
+    )
+
+    assert len(rows) == 3
+    assert [r.interval_start for r in rows] == [
+        datetime(2026, 8, 30, 14, tzinfo=timezone.utc),
+        datetime(2026, 8, 30, 15, tzinfo=timezone.utc),
+        datetime(2026, 8, 30, 16, tzinfo=timezone.utc),
+    ]
+    assert rows[0].kwh == Decimal("1.0")
+
+
+def test_chart_payloads_reject_negative_and_non_finite_values():
+    with pytest.raises(ExtractionError):
+        extract_chart_payloads(
+            [make_chart_row("2026-08-30 14:00:00+00:00", RTC11=-1.0)],
+            ACCOUNT_ID,
+            REQUESTED_DAY,
+        )
+    with pytest.raises(ExtractionError):
+        extract_chart_payloads(
+            [make_chart_row("2026-08-30 14:00:00+00:00", RTC11=float("nan"))],
+            ACCOUNT_ID,
+            REQUESTED_DAY,
+        )
+
+
+def test_chart_payloads_ignore_none_values():
+    rows = extract_chart_payloads(
+        [make_chart_row("2026-08-30 14:00:00+00:00", RTC11=None, RTC33=0.5)],
+        ACCOUNT_ID,
+        REQUESTED_DAY,
+    )
+
+    assert {row.tariff for row in rows} == {"RTC33"}
+
+
+def test_chart_payloads_deduplicate_duplicate_shapes():
+    row = make_chart_row("2026-08-30 14:00:00+00:00", RTC11=1.0, RTC33=0.5)
+    rows = extract_chart_payloads([row, dict(row), dict(row)], ACCOUNT_ID, REQUESTED_DAY)
+
+    assert len(rows) == 2
+    assert {(r.tariff, r.kwh) for r in rows} == {("RTC11", Decimal("1.0")), ("RTC33", Decimal("0.5"))}
+
+
+def test_chart_payloads_filter_by_requested_brisbane_day():
+    rows = extract_chart_payloads(
+        [
+            make_chart_row("2026-08-30 14:00:00+00:00", RTC11=1.0),
+            make_chart_row("2026-08-30 15:00:00+00:00", RTC11=2.0),
+        ],
+        ACCOUNT_ID,
+        REQUESTED_DAY,  # UTC 14:00 == Brisbane 31 Aug 00:00 -> in day
+    )
+
+    assert len(rows) == 2
+    assert [r.kwh for r in rows] == [Decimal("1.0"), Decimal("2.0")]
+
+
+def test_chart_payloads_empty_after_filter_raises():
+    with pytest.raises(ExtractionError, match="requested Brisbane day"):
+        extract_chart_payloads(
+            [make_chart_row("2026-08-29 14:00:00+00:00", RTC11=1.0)],
+            ACCOUNT_ID,
+            REQUESTED_DAY,
+        )
+
+
+def test_chart_payloads_reject_malformed_rows():
+    with pytest.raises(ExtractionError):
+        extract_chart_payloads([], ACCOUNT_ID, REQUESTED_DAY)
+    with pytest.raises(ExtractionError):
+        extract_chart_payloads(["not-a-dict"], ACCOUNT_ID, REQUESTED_DAY)
+    with pytest.raises(ExtractionError):
+        extract_chart_payloads([{"date": "x"}], ACCOUNT_ID, REQUESTED_DAY)  # no day
+    with pytest.raises(ExtractionError):
+        extract_chart_payloads(
+            [make_chart_row("garbage", RTC11=1.0)], ACCOUNT_ID, REQUESTED_DAY
+        )
+    with pytest.raises(ExtractionError):
+        extract_chart_payloads(
+            [{"day": "2026-08-31 14:00:00+00:00", "RTC11": "abc"}],
+            ACCOUNT_ID,
+            REQUESTED_DAY,
+        )
+
+
+def test_chart_payloads_tariff_keys_are_dynamic_not_hardcoded():
+    rows = extract_chart_payloads(
+        [make_chart_row("2026-08-30 14:00:00+00:00", RTC77=0.25)],
+        ACCOUNT_ID,
+        REQUESTED_DAY,
+    )
+
+    assert len(rows) == 1
+    assert rows[0].tariff == "RTC77"
+    assert rows[0].kwh == Decimal("0.25")
 
 
 def test_selector_accepts_exactly_one_valid_json_response(fixture_json):

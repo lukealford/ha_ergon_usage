@@ -18,7 +18,12 @@ from zoneinfo import ZoneInfo
 
 from .config import Settings
 from .errors import AccountDiscoveryError, AuthenticationError, ExtractionError
-from .extractor import CapturedJson, select_usage_payload, extract_dom
+from .extractor import (
+    CapturedJson,
+    extract_chart_payloads,
+    extract_dom,
+    select_usage_payload,
+)
 from .models import TariffRate, UsageReading
 from .normalize import BRISBANE, discover_single_account
 from .tariff_rates import extract_tariff_rates
@@ -68,12 +73,43 @@ SUBMIT_SELECTORS = (
     'input[type="submit"]',
 )
 
+# Walks every rendered Recharts bar shape and reads the React fiber's
+# ``memoizedProps.payload`` object, which carries the hourly usage row
+# (``{date, day, RTC11: ..., RTC33: ...}``).  Fiber keys are dynamic
+# (``__reactFiber$*``), so they are located by prefix.  The walk hops up
+# ``return``/``alternate`` links (bounded at 8) because on the live portal the
+# props carrying ``payload`` sometimes sit a few fiber nodes above the shape
+# element itself.  Returns ``[]`` when no payloads are found.
+_RECHARTS_PAYLOAD_JS = """
+() => {
+  const shapes = document.querySelectorAll('.recharts-bar-rectangle path, .recharts-bar-rectangle rect');
+  const rows = [];
+  const seen = new Set();
+  for (const shape of shapes) {
+    for (const key of Object.keys(shape)) {
+      if (!key.startsWith('__reactFiber$')) continue;
+      let fiber = shape[key];
+      for (let hop = 0; fiber && hop < 8; hop++) {
+        const payload = fiber.memoizedProps && fiber.memoizedProps.payload;
+        if (payload && typeof payload === 'object' && payload.day && !seen.has(payload.day)) {
+          seen.add(payload.day);
+          rows.push(payload);
+        }
+        fiber = fiber.return || fiber.alternate;
+        if (fiber && fiber.return) fiber = fiber.return;
+      }
+    }
+  }
+  return rows;
+}
+"""
+
 
 @dataclass(frozen=True)
 class FetchResult:
     account_id: str
     readings: tuple[UsageReading, ...]
-    source: Literal["structured", "dom"]
+    source: Literal["structured", "chart", "dom"]
 
 
 BrowserOpener = Callable[[Settings], object]
@@ -178,9 +214,13 @@ class ErgonClient:
                     await asyncio.sleep(min(0.25, remaining))
                 await page.wait_for_timeout(1_000)
                 html = await page.content()
+                # The live portal renders usage as a Recharts chart; hourly
+                # rows live in the React props of each bar shape.  Read them
+                # while the page is open (returns [] on any failure).
+                chart_rows = await _read_chart_payloads(page)
             finally:
                 await page.close()
-        return _resolve_readings(portal.account_id, candidates, html, day)
+        return _resolve_readings(portal.account_id, candidates, html, chart_rows, day)
 
     def _run(self):
         """Context manager performing login and account discovery."""
@@ -334,20 +374,37 @@ async def _capture_response_into(response, candidates: list[CapturedJson]) -> No
     )
 
 
+async def _read_chart_payloads(page) -> list[dict]:
+    """Best-effort read of Recharts bar payload rows via React fibers."""
+
+    try:
+        rows = await page.evaluate(_RECHARTS_PAYLOAD_JS)
+    except Exception:  # noqa: BLE001 - portal markup may differ
+        return []
+    if not isinstance(rows, list):
+        return []
+    return [row for row in rows if isinstance(row, dict)]
+
+
 def _resolve_readings(
     account_id: str,
     candidates: list[CapturedJson],
     html: str,
+    chart_rows: list[dict],
     day: date | None,
 ) -> FetchResult:
-    """Prefer a structured payload; fall back to DOM extraction once."""
+    """Prefer structured payload, then Recharts rows, then DOM extraction."""
 
     try:
         readings = select_usage_payload(candidates, account_id, day)
-        source: Literal["structured", "dom"] = "structured"
+        source: Literal["structured", "chart", "dom"] = "structured"
     except ExtractionError:
-        readings = extract_dom(html, account_id, day)
-        source = "dom"
+        try:
+            readings = extract_chart_payloads(chart_rows, account_id, day)
+            source = "chart"
+        except ExtractionError:
+            readings = extract_dom(html, account_id, day)
+            source = "dom"
     return FetchResult(account_id=account_id, readings=tuple(readings), source=source)
 
 
