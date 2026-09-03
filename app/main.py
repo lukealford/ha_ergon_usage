@@ -11,7 +11,7 @@ from aiohttp import web
 
 from .config import Settings
 from .coordinator import Coordinator
-from .ergon import ErgonClient
+from .ergon import ErgonClient, WafTokenStore
 from .home_assistant import HomeAssistantClient
 from .ledger import Ledger
 from .logging_utils import SecretRedactionFilter
@@ -53,7 +53,10 @@ async def async_main() -> None:
 
     ledger = Ledger.open(Path(settings.data_dir) / _LEDGER_NAME)
     try:
-        ergon = ErgonClient(settings)
+        # Persist the AWS WAF token across runs so a solved captcha lasts
+        # its ~3-day TTL instead of a single run.
+        waf_store = WafTokenStore(Path(settings.data_dir) / "waf_state.json")
+        ergon = ErgonClient(settings, waf_store=waf_store)
         home_assistant = HomeAssistantClient(settings)
         coordinator = Coordinator(settings, ergon, ledger, home_assistant)
 

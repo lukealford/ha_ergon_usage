@@ -18,6 +18,7 @@ Fake behaviour contract (mirrors real Playwright):
 """
 
 import json
+import logging
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from decimal import Decimal
@@ -166,6 +167,17 @@ class FakeContext:
     def __init__(self, scenario: "Scenario") -> None:
         self.scenario = scenario
         self.closed = False
+        self.init_scripts: list[str] = []
+        self.added_cookies: list[list[dict]] = []
+
+    async def add_init_script(self, script: str) -> None:
+        self.init_scripts.append(script)
+
+    async def add_cookies(self, cookies: list[dict]) -> None:
+        self.added_cookies.append(cookies)
+
+    async def cookies(self) -> list[dict]:
+        return []
 
     async def new_page(self) -> FakePage:
         self.scenario.pages_created += 1
@@ -457,3 +469,154 @@ class TestNoSecretLeakage:
         joined = " ".join(scenario.navigations)
         assert "test@example.com" not in joined
         assert "not-a-real-password" not in joined
+
+
+def _ergon_cookie(name: str = "aws-waf-token", expires: float | None = None) -> dict:
+    import time as _time
+
+    return {
+        "name": name,
+        "value": "secret-token-value",
+        "domain": ".myaccount.ergonretail.com.au",
+        "path": "/",
+        "expires": expires if expires is not None else _time.time() + 86400,
+    }
+
+
+def _unrelated_cookie() -> dict:
+    return {
+        "name": "other",
+        "value": "x",
+        "domain": ".example.org",
+        "path": "/",
+        "expires": 9999999999,
+    }
+
+
+class TestWafTokenStore:
+    def test_save_load_round_trip_filters_non_ergon_cookies(self, tmp_path):
+        from app.ergon import WafTokenStore
+
+        store = WafTokenStore(tmp_path / "nested" / "waf_state.json")
+        cookies = [_ergon_cookie(), _unrelated_cookie()]
+        store.save(cookies)
+        loaded = store.load()
+        assert loaded is not None
+        assert len(loaded) == 1
+        assert loaded[0]["name"] == "aws-waf-token"
+
+    def test_load_returns_none_when_file_absent(self, tmp_path):
+        from app.ergon import WafTokenStore
+
+        assert WafTokenStore(tmp_path / "waf_state.json").load() is None
+
+    def test_load_returns_none_when_token_expired(self, tmp_path):
+        import time
+
+        from app.ergon import WafTokenStore
+
+        path = tmp_path / "waf_state.json"
+        store = WafTokenStore(path)
+        store.save([_ergon_cookie(expires=time.time() - 10)])
+        assert store.load() is None
+
+    def test_load_returns_none_on_corrupt_file(self, tmp_path):
+        from app.ergon import WafTokenStore
+
+        path = tmp_path / "waf_state.json"
+        path.write_text("{not json", encoding="utf-8")
+        assert WafTokenStore(path).load() is None
+
+    def test_load_returns_none_on_non_list_json(self, tmp_path):
+        from app.ergon import WafTokenStore
+
+        path = tmp_path / "waf_state.json"
+        path.write_text('{"oops": 1}', encoding="utf-8")
+        assert WafTokenStore(path).load() is None
+
+
+class TestWafStoreIntegration:
+    @pytest.mark.asyncio
+    async def test_client_restores_and_persists_cookies(self, tmp_path, caplog):
+        from app.ergon import WafTokenStore
+
+        store = WafTokenStore(tmp_path / "waf_state.json")
+        # Pre-seed so the run restores cookies into the context.
+        store.save([_ergon_cookie()])
+
+        scenario = Scenario()
+        scenario.usage_responses = [usage_json_response()]
+        contexts: list[FakeContext] = []
+        original_new_context = FakeBrowser.new_context
+
+        async def new_context(self: FakeBrowser, **kwargs) -> FakeContext:
+            context = await original_new_context(self, **kwargs)
+            contexts.append(context)
+            return context
+
+        async def get_cookies(self: FakeContext) -> list[dict]:
+            return [_ergon_cookie(), _unrelated_cookie()]
+
+        FakeBrowser.new_context = new_context  # type: ignore[method-assign]
+        FakeContext.cookies = get_cookies  # type: ignore[attr-defined]
+        try:
+            result = await ErgonClient(
+                Settings(), browser_factory=scenario.factory, waf_store=store
+            ).fetch_rolling()
+        finally:
+            FakeBrowser.new_context = original_new_context  # type: ignore[method-assign]
+            del FakeContext.cookies
+        assert result.source == "structured"
+        # Pre-seeded cookies were pushed into the context.
+        assert contexts[0].added_cookies and contexts[0].added_cookies[0][0][
+            "name"
+        ] == "aws-waf-token"
+        # Exit-time save filtered to Ergon domains only.
+        loaded = store.load()
+        assert loaded is not None
+        assert [c["name"] for c in loaded] == ["aws-waf-token"]
+        # Cookie values never appear in logs.
+        with caplog.at_level(logging.WARNING):
+            pass
+        assert "secret-token-value" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_client_without_store_does_no_cookie_io(self):
+        scenario = Scenario()
+        scenario.usage_responses = [usage_json_response()]
+        contexts: list[FakeContext] = []
+        original_new_context = FakeBrowser.new_context
+
+        async def new_context(self: FakeBrowser, **kwargs) -> FakeContext:
+            context = await original_new_context(self, **kwargs)
+            contexts.append(context)
+            return context
+
+        FakeBrowser.new_context = new_context  # type: ignore[method-assign]
+        try:
+            await make_client(scenario).fetch_rolling()
+        finally:
+            FakeBrowser.new_context = original_new_context  # type: ignore[method-assign]
+        assert contexts[0].added_cookies == []
+
+    @pytest.mark.asyncio
+    async def test_stale_cookie_format_does_not_crash_run(self, tmp_path):
+        from app.ergon import WafTokenStore
+
+        store = WafTokenStore(tmp_path / "waf_state.json")
+        store.save([_ergon_cookie()])
+
+        scenario = Scenario()
+        scenario.usage_responses = [usage_json_response()]
+
+        async def add_cookies(self: FakeContext, cookies: list[dict]) -> None:
+            raise RuntimeError("stale format")
+
+        FakeContext.add_cookies = add_cookies  # type: ignore[method-assign]
+        try:
+            result = await ErgonClient(
+                Settings(), browser_factory=scenario.factory, waf_store=store
+            ).fetch_rolling()
+        finally:
+            del FakeContext.add_cookies
+        assert result.source == "structured"

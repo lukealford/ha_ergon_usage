@@ -12,8 +12,10 @@ installed.  Tests inject a ``browser_factory`` and never import playwright.
 import asyncio
 import json
 import logging
+import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 from typing import Awaitable, Callable, Literal
 from zoneinfo import ZoneInfo
 
@@ -50,6 +52,10 @@ REALISTIC_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
 )
+
+# Cookie domains worth persisting: the Ergon portal plus the AWS WAF
+# challenge infrastructure that issues the aws-waf-token cookie.
+_WAF_COOKIE_DOMAIN_MARKERS = ("ergonretail.com.au", "awswaf")
 
 # Ordered, explicit selectors for the login form.  The portal's inputs are
 # only distinguishable by their aria-labels ("Email Address" / "Password"),
@@ -127,6 +133,56 @@ async def _first_visible(page, selectors: tuple[str, ...]) -> str:
     raise AuthenticationError("Login form fields could not be found.")
 
 
+class WafTokenStore:
+    """Persists portal cookies (notably ``aws-waf-token``) between runs.
+
+    A solved AWS WAF captcha sets a token cookie valid for roughly three
+    days; persisting it lets subsequent runs skip the manual challenge.
+    Cookie values are NEVER logged.  The file is written atomically so a
+    crash mid-write cannot corrupt the stored state.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+
+    def load(self) -> list[dict] | None:
+        """Return stored cookies, or None if missing/corrupt/expired."""
+
+        try:
+            raw = json.loads(self._path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if not isinstance(raw, list):
+            return None
+        for cookie in raw:
+            if (
+                isinstance(cookie, dict)
+                and cookie.get("name") == "aws-waf-token"
+                and float(cookie.get("expires", -1)) <= time.time()
+            ):
+                # Token expired; stale state is useless to the portal.
+                return None
+        return raw
+
+    def save(self, cookies: list[dict]) -> None:
+        """Persist only Ergon/WAF-domain cookies atomically."""
+
+        kept = [
+            cookie
+            for cookie in cookies
+            if any(
+                marker in str(cookie.get("domain", ""))
+                for marker in _WAF_COOKIE_DOMAIN_MARKERS
+            )
+        ]
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self._path.with_suffix(self._path.suffix + ".tmp")
+        tmp.write_text(
+            json.dumps(kept), encoding="utf-8"
+        )  # Values never logged anywhere.
+        tmp.replace(self._path)
+
+
 class ErgonClient:
     """Automates the Ergon portal with one authenticated browser per run."""
 
@@ -136,6 +192,7 @@ class ErgonClient:
         browser_factory: BrowserOpener | None = None,
         *,
         headful: bool = False,
+        waf_store: WafTokenStore | None = None,
     ) -> None:
         self._settings = settings
         if browser_factory is None:
@@ -147,6 +204,7 @@ class ErgonClient:
             # Injected factories manage their own launch options.
             self._headful = False
         self._browser_factory = browser_factory
+        self._waf_store = waf_store
 
     # -- public API ------------------------------------------------------
 
@@ -277,7 +335,10 @@ class ErgonClient:
         """Context manager performing login and account discovery."""
 
         return _AuthenticatedRun(
-            self._settings, self._browser_factory, headful=self._headful
+            self._settings,
+            self._browser_factory,
+            headful=self._headful,
+            waf_store=self._waf_store,
         )
 
 
@@ -300,11 +361,17 @@ class _AuthenticatedRun:
     """Async context manager: one browser, one context, login, discovery."""
 
     def __init__(
-        self, settings: Settings, browser_factory: BrowserOpener, *, headful: bool = False
+        self,
+        settings: Settings,
+        browser_factory: BrowserOpener,
+        *,
+        headful: bool = False,
+        waf_store: WafTokenStore | None = None,
     ) -> None:
         self._settings = settings
         self._browser_factory = browser_factory
         self._headful = headful
+        self._waf_store = waf_store
         self._opener = None
         self._browser = None
         self._context = None
@@ -317,8 +384,15 @@ class _AuthenticatedRun:
             # Playwright's default "HeadlessChrome" user agent outright.
             # Present a normal Chrome UA on the same engine version.
             self._context = await self._browser.new_context(
-                user_agent=REALISTIC_USER_AGENT
+                user_agent=REALISTIC_USER_AGENT,
             )
+            if self._waf_store is not None:
+                cookies = self._waf_store.load()
+                if cookies:
+                    try:
+                        await self._context.add_cookies(cookies)
+                    except Exception:  # noqa: BLE001 - stale format must not crash
+                        logger.warning("Could not restore WAF cookies; continuing fresh.")
             page = await self._context.new_page()
             try:
                 await self._login(page)
@@ -334,6 +408,18 @@ class _AuthenticatedRun:
             raise
 
     async def __aexit__(self, *_exc) -> None:
+        # Save cookies on reaching __aexit__ of a run: login + account
+        # discovery succeeded inside __aenter__, so the WAF demonstrably let
+        # us through, and the fresh token is worth persisting.  A run that
+        # failed __aenter__ never reaches here (its __aexit__ is invoked on
+        # the un-entered object is avoided because __aenter__ raised before
+        # returning).  Best-effort; cleanup always proceeds.
+        if self._waf_store is not None and self._context is not None:
+            try:
+                cookies = await self._context.cookies()
+                self._waf_store.save(cookies)
+            except Exception:  # noqa: BLE001 - persistence must not mask errors
+                logger.warning("Could not persist WAF cookies.")
         await self._cleanup()
 
     async def _cleanup(self) -> None:
