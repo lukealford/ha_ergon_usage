@@ -89,10 +89,10 @@ def test_readme_documents_addon_store_install_and_not_hacs():
 
 def test_readme_documents_safe_first_run_procedure():
     readme = _read("README.md")
-    assert "initial_history_days" in readme
-    assert "backfill_batch_days" in readme
-    assert "365" in readme
-    assert "30" in readme
+    assert "initial_history_days: 1" in readme
+    assert "backfill_batch_days: 1" in readme
+    assert "initial_history_days: 365" in readme
+    assert "backfill_batch_days: 30" in readme
 
 
 def test_readme_documents_energy_dashboard_statistics():
