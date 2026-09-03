@@ -9,7 +9,12 @@ class SecretRedactionFilter(logging.Filter):
 
     def __init__(self, secrets: Iterable[str]) -> None:
         super().__init__()
-        self._secrets = tuple(secret for secret in secrets if secret)
+        self._secrets = tuple(
+            sorted(
+                {secret for secret in secrets if secret},
+                key=lambda secret: (-len(secret), secret),
+            )
+        )
 
     def filter(self, record: logging.LogRecord) -> bool:
         message = record.getMessage()

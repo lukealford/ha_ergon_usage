@@ -24,6 +24,15 @@ def test_redacts_percent_style_arguments_after_formatting() -> None:
     assert record.args == ()
 
 
+def test_redacts_overlapping_secrets_when_shorter_secret_is_listed_first() -> None:
+    record = logging.LogRecord("ergon", logging.INFO, __file__, 0, "Credential: abcd", (), None)
+
+    SecretRedactionFilter(["abc", "abcd"]).filter(record)
+
+    assert record.msg == "Credential: [REDACTED]"
+    assert record.args == ()
+
+
 def test_ignores_empty_secrets() -> None:
     record = logging.LogRecord("ergon", logging.INFO, __file__, 0, "The message is safe", (), None)
 
