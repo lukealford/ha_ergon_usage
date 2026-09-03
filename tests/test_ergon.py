@@ -293,7 +293,7 @@ class TestFetchRolling:
         try:
             result = await make_client(scenario).fetch_rolling()
         finally:
-            del FakePage.evaluate  # type: ignore[attr-defined]
+            del FakePage.__dict__["evaluate"]  # restore class default
         assert result.source == "chart"
         assert len(result.readings) == 3
         assert {(r.tariff, r.kwh) for r in result.readings} == {
@@ -324,7 +324,7 @@ class TestFetchRolling:
         try:
             result = await make_client(scenario).fetch_rolling()
         finally:
-            del FakePage.evaluate  # restore the class default
+            del FakePage.__dict__["evaluate"]  # restore class default
         assert result.source == "dom"
         assert len(result.readings) == 1
         assert result.readings[0].kwh == Decimal("1.25")
