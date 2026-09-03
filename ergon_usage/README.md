@@ -40,16 +40,16 @@ add the local path as a repository instead.)
 
 ## Configuration options
 
-| Option | Type | Range | Default | Description |
-| --- | --- | --- | --- | --- |
-| `ergon_email` | email | required | — | Ergon portal login email (stored only in add-on config). |
-| `ergon_password` | password | required | — | Ergon portal login password (stored only in add-on config). |
-| `poll_interval_hours` | int | 6–48 | 12 | Hours between rolling re-syncs. |
-| `initial_history_days` | int | 1–730 | 365 | Days of history fetched on first run. |
-| `backfill_batch_days` | int | 1–60 | 30 | Days per backfill batch per run. |
-| `request_delay_seconds` | int | 0–60 | 3 | Delay between portal requests. |
-| `retry_limit` | int | 0–10 | 5 | Retries per failed portal request. |
-| `tariff_name_overrides` | dict | — | `{}` | Map Ergon tariff names to friendly statistic names. |
+| Option                  | Type     | Range    | Default | Description                                                 |
+| ----------------------- | -------- | -------- | ------- | ----------------------------------------------------------- |
+| `ergon_email`           | email    | required | —       | Ergon portal login email (stored only in add-on config).    |
+| `ergon_password`        | password | required | —       | Ergon portal login password (stored only in add-on config). |
+| `poll_interval_hours`   | int      | 6–48     | 12      | Hours between rolling re-syncs.                             |
+| `initial_history_days`  | int      | 1–730    | 365     | Days of history fetched on first run.                       |
+| `backfill_batch_days`   | int      | 1–60     | 30      | Days per backfill batch per run.                            |
+| `request_delay_seconds` | int      | 0–60     | 3       | Delay between portal requests.                              |
+| `retry_limit`           | int      | 0–10     | 5       | Retries per failed portal request.                          |
+| `tariff_name_overrides` | dict     | —        | `{}`    | Map Ergon tariff names to friendly statistic names.         |
 
 ## Safe first-run procedure (recommended)
 
@@ -74,9 +74,10 @@ This prevents an unverified parser from making hundreds of requests.
 ## Cost boundaries
 
 Cost statistics begin only at the first observed rate boundary for each tariff —
-  rates are only known from the moment the portal exposes them. Backfilled
-  readings after that boundary **are costed**; usage earlier than the first
-  observed rate remains energy-only.
+rates are only known from the moment the portal exposes them. Backfilled
+readings after that boundary **are costed**; usage earlier than the first
+observed rate remains energy-only.
+
 ## Status UI
 
 The add-on's ingress panel (Sidebar → Ergon Usage) shows the discovered

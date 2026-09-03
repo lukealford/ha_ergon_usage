@@ -4,7 +4,8 @@ from pathlib import Path
 
 import yaml
 
-ADDON_DIR = Path(__file__).resolve().parents[1]
+ADDON_DIR = Path(__file__).resolve().parents[2] / "ergon_usage"
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _read(relative: str) -> str:
@@ -68,7 +69,7 @@ def test_run_sh_execs_entrypoint_with_safety_flags():
 
 
 def test_ci_workflow_runs_pytest_and_compileall():
-    workflow = (ADDON_DIR / ".github" / "workflows" / "test.yml").read_text(encoding="utf-8")
+    workflow = (REPO_ROOT / ".github" / "workflows" / "test.yml").read_text(encoding="utf-8")
     assert "pytest" in workflow
     assert "compileall" in workflow
 
