@@ -119,6 +119,7 @@ _RECHARTS_PAYLOAD_JS = """
                 if (props && props.payload) {
                     rows.push({
                         series: props.name || props.payload.name || null,
+                        dataKey: typeof props.dataKey === 'string' ? props.dataKey : null,
                         payload: props.payload,
                     });
                     break;

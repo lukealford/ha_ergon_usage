@@ -249,38 +249,30 @@ def _parse_chart_day(value: object) -> datetime:
 
 
 def _build_tariff_names(wrapped_rows: Sequence[object]) -> dict[str, str]:
-    """Majority-vote RTC codes to display tariff names from chart shapes.
+    """Map RTC codes to display tariff names from chart shapes.
 
-    Each wrapped row is ``{"series": <display name>, "payload": {row}}``.
-    A shape of series "Tariff 33" renders only RTC33 bars, so any nonzero
-    ``RTC*`` value in its payload maps that RTC code to the series name.
-    Codes with no observations (or tied votes) keep the RTC code as name.
+    Each wrapped row is ``{"series": <display name>, "dataKey": <code>,
+    "payload": {row}}``.  Recharts gives every bar shape a ``dataKey`` prop
+    naming the exact payload key that shape renders, so the (dataKey,
+    series) pair is authoritative per shape — no voting needed.  Shapes
+    missing either field contribute nothing; codes with no observation keep
+    the RTC code as name.
     """
 
-    votes: dict[str, Counter[str]] = defaultdict(Counter)
+    names: dict[str, str] = {}
     for wrapped in wrapped_rows:
         if not isinstance(wrapped, Mapping):
             continue
         series = wrapped.get("series")
-        if not isinstance(series, str) or not series.strip():
+        data_key = wrapped.get("dataKey")
+        if (
+            not isinstance(series, str)
+            or not series.strip()
+            or not isinstance(data_key, str)
+            or not _TARIFF_KEY_RE.match(data_key)
+        ):
             continue
-        payload = wrapped.get("payload")
-        if not isinstance(payload, Mapping):
-            continue
-        for key, value in payload.items():
-            if not isinstance(key, str) or not _TARIFF_KEY_RE.match(key):
-                continue
-            if (
-                isinstance(value, (int, float))
-                and not isinstance(value, bool)
-                and value != 0
-            ):
-                votes[key][series.strip()] += 1
-    names: dict[str, str] = {}
-    for code, counts in votes.items():
-        top_count = max(counts.values())
-        winners = [n for n, c in counts.items() if c == top_count]
-        names[code] = winners[0] if len(winners) == 1 else code
+        names.setdefault(data_key, series.strip())
     return names
 
 
@@ -304,11 +296,11 @@ def extract_chart_payloads(
       deduplicated by (tariff, interval_start).
 
     Tariff codes are mapped to the chart's display names (``RTC11`` →
-    ``"Tariff 11"``) by majority vote across the observed (series, code)
-    pairs; rows whose ``series`` is None contribute no votes.  Codes without
-    a consistent display name fall back to the RTC code itself, so readings
-    always carry a tariff name.  Display names are what the rates page uses,
-    allowing usage and rates to join in the coordinator.
+    ``"Tariff 11"``) via each shape's Recharts ``dataKey`` prop — the
+    authoritative series key for that shape.  Codes without an observed
+    dataKey fall back to the RTC code itself, so readings always carry a
+    tariff name.  Display names are what the rates page uses, allowing
+    usage and rates to join in the coordinator.
     """
 
     if not isinstance(rows, (list, tuple)) or not rows:

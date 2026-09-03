@@ -134,18 +134,25 @@ def chart_rows():
         for code, name in (("RTC11", "Tariff 11"), ("RTC33", "Tariff 33")):
             if row.get(code):
                 sub = {k: v for k, v in row.items() if k in ("date", "day", code)}
-                wrapped.append({"series": name, "payload": sub})
+                wrapped.append({"series": name, "dataKey": code, "payload": sub})
     return wrapped
 
 
 def make_chart_row(day: str, series: str = "Tariff 11", **tariffs: float | None) -> dict:
     payload = {"date": "x", "day": day}
     payload.update(tariffs)
-    return {"series": series, "payload": payload}
+    data_key = next((k for k in tariffs if k.startswith("RTC") and tariffs[k]), "RTC11")
+    return {"series": series, "dataKey": data_key, "payload": payload}
 
 
 def wrap(series, payload):
-    return {"series": series, "payload": payload}
+    # Derive the dataKey the way Recharts does: the RTC key this shape
+    # renders — i.e. the one with a nonzero value in its own payload.
+    data_key = next(
+        (k for k, v in payload.items() if k.startswith("RTC") and v),
+        next((k for k in payload if k.startswith("RTC")), "RTC11"),
+    )
+    return {"series": series, "dataKey": data_key, "payload": payload}
 
 
 def full_day_rows(**fixed_tariffs) -> list[dict]:
