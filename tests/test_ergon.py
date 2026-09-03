@@ -138,6 +138,9 @@ class FakePage:
                 raise FakeTimeoutError(f"Timeout {timeout}ms waiting for {selector}.")
         return
 
+    async def wait_for_timeout(self, _ms: int) -> None:
+        return
+
     async def content(self) -> str:
         return self.scenario.page_html
 

@@ -9,6 +9,7 @@ module (and the whole test suite) imports cleanly without playwright
 installed.  Tests inject a ``browser_factory`` and never import playwright.
 """
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -30,7 +31,8 @@ TARIFF_URL_TEMPLATE = PORTAL_BASE + "/{account}/tariff-metering"
 
 # Bounded wait (ms) for the portal to load after submitting credentials.
 LOGIN_WAIT_MS = 15_000
-
+# Bounded wait (ms) for the usage page's XHR data to arrive after load.
+USAGE_XHR_WAIT_MS = 15_000
 # Generous wait (ms) for a human to solve the AWS WAF challenge in headful
 # mode before the login form appears.
 CHALLENGE_WAIT_MS = 300_000
@@ -147,14 +149,26 @@ class ErgonClient:
 
     async def _fetch_usage(self, day: date | None) -> FetchResult:
         candidates: list[CapturedJson] = []
+
+        async def _capture(response) -> None:
+            await _capture_response_into(response, candidates)
+
         async with self._run() as portal:
             page = await portal.context.new_page()
             try:
-                page.on(
-                    "response",
-                    lambda response: _capture_response(response, candidates),
-                )
+                page.on("response", _capture)
                 await page.goto(self._usage_url(portal.account_id, day))
+                # The usage page is a SPA: the data arrives via XHR after
+                # load.  Wait until at least one JSON response has been
+                # captured (bounded), then give rendering a moment before
+                # taking the DOM snapshot for the fallback path.
+                deadline = asyncio.get_running_loop().time() + USAGE_XHR_WAIT_MS / 1000
+                while not candidates:
+                    remaining = deadline - asyncio.get_running_loop().time()
+                    if remaining <= 0:
+                        break
+                    await asyncio.sleep(min(0.25, remaining))
+                await page.wait_for_timeout(1_000)
                 html = await page.content()
             finally:
                 await page.close()
@@ -292,7 +306,7 @@ async def _page_hrefs(page) -> list[str]:
         return []
 
 
-async def _capture_response(response, candidates: list[CapturedJson]) -> None:
+async def _capture_response_into(response, candidates: list[CapturedJson]) -> None:
     """Retain parsed JSON payloads in memory only; never log content."""
 
     try:
