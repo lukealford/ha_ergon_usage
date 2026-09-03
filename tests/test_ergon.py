@@ -620,3 +620,41 @@ class TestWafStoreIntegration:
         finally:
             del FakeContext.add_cookies
         assert result.source == "structured"
+
+
+class TestStealthConstants:
+    def test_stealth_js_present_and_addresses_webdriver(self):
+        from app.ergon import _STEALTH_JS
+
+        assert _STEALTH_JS.strip()
+        assert "webdriver" in _STEALTH_JS
+
+    def test_launch_args_disable_automation_controlled(self):
+        from app.ergon import _LAUNCH_ARGS
+
+        assert "--disable-blink-features=AutomationControlled" in _LAUNCH_ARGS
+
+    @pytest.mark.asyncio
+    async def test_context_gets_stealth_init_script_and_locale(self):
+        scenario = Scenario()
+        scenario.usage_responses = [usage_json_response()]
+        contexts: list[FakeContext] = []
+        kwargs_seen: list[dict] = []
+        original_new_context = FakeBrowser.new_context
+
+        async def new_context(self: FakeBrowser, **kwargs) -> FakeContext:
+            kwargs_seen.append(kwargs)
+            context = await original_new_context(self, **kwargs)
+            contexts.append(context)
+            return context
+
+        FakeBrowser.new_context = new_context  # type: ignore[method-assign]
+        try:
+            await make_client(scenario).fetch_rolling()
+        finally:
+            FakeBrowser.new_context = original_new_context  # type: ignore[method-assign]
+        assert contexts[0].init_scripts and "webdriver" in contexts[0].init_scripts[0]
+        context_kwargs = kwargs_seen[0]
+        assert context_kwargs["locale"] == "en-AU"
+        assert context_kwargs["timezone_id"] == "Australia/Brisbane"
+        assert context_kwargs["viewport"] == {"width": 1280, "height": 800}

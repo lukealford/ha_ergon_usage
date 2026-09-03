@@ -53,6 +53,24 @@ REALISTIC_USER_AGENT = (
     "(KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
 )
 
+# Standard stealth mitigations: keep Playwright's Chromium from looking
+# automated.  Applied identically to headless and headful launches.
+_LAUNCH_ARGS = ["--disable-blink-features=AutomationControlled"]
+
+# Runs before any page script: removes ``navigator.webdriver``, fakes a
+# benign ``chrome.runtime``, and pins plugins/languages to Chromium defaults.
+# Content values only, never credentials or cookies.
+_STEALTH_JS = """
+Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+window.chrome = window.chrome || {runtime: {}};
+Object.defineProperty(navigator, 'plugins', {
+    get: () => [1, 2, 3, 4, 5],
+});
+Object.defineProperty(navigator, 'languages', {
+    get: () => ['en-AU', 'en'],
+});
+"""
+
 # Cookie domains worth persisting: the Ergon portal plus the AWS WAF
 # challenge infrastructure that issues the aws-waf-token cookie.
 _WAF_COOKIE_DOMAIN_MARKERS = ("ergonretail.com.au", "awswaf")
@@ -385,7 +403,13 @@ class _AuthenticatedRun:
             # Present a normal Chrome UA on the same engine version.
             self._context = await self._browser.new_context(
                 user_agent=REALISTIC_USER_AGENT,
+                locale="en-AU",
+                timezone_id="Australia/Brisbane",
+                viewport={"width": 1280, "height": 800},
+                screen={"width": 1280, "height": 800},
             )
+            # Stealth is applied identically for headless and headful runs.
+            await self._context.add_init_script(_STEALTH_JS)
             if self._waf_store is not None:
                 cookies = self._waf_store.load()
                 if cookies:
@@ -593,7 +617,9 @@ def _default_browser_factory(settings: Settings, headful: bool = False):
     class _Opener:
         async def __aenter__(self):
             self._pw = await async_playwright().start()
-            return await self._pw.chromium.launch(headless=not headful)
+            return await self._pw.chromium.launch(
+                headless=not headful, args=list(_LAUNCH_ARGS)
+            )
 
         async def __aexit__(self, *_exc) -> None:
             await self._pw.stop()
