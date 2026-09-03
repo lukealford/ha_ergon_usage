@@ -651,6 +651,286 @@ def _resolve_readings(
     return FetchResult(account_id=account_id, readings=tuple(readings), source=source)
 
 
+# Interactive verification: poll interval for the challenge/signin monitor,
+# and the hard timeout after which the session stops itself.
+VERIFY_POLL_SECONDS = 1.0
+VERIFY_TIMEOUT_SECONDS = 600
+CLICK_SETTLE_MS = 500
+
+_ACCOUNT_LINK = 'a[href*="/portal/A-"]'
+
+
+class VerificationSession:
+    """A browser held open on the WAF challenge for interactive solving.
+
+    Launched on demand from the status UI. Streams screenshots and forwards
+    clicks so the operator can solve the challenge through the ingress UI.
+    Detects success by the account link appearing, then saves WAF cookies.
+    """
+
+    def __init__(
+        self,
+        settings: Settings,
+        waf_store: WafTokenStore | None,
+        browser_factory: BrowserOpener | None = None,
+    ) -> None:
+        self._settings = settings
+        self._waf_store = waf_store
+        self._browser_factory = browser_factory
+        self._opener = None
+        self._browser = None
+        self._context = None
+        self.page = None
+        self._status = "idle"
+        self._error_message: str | None = None
+        self._saw_account_link = False
+        self._closed = False
+        self._monitor_task: asyncio.Task | None = None
+
+    # -- state ------------------------------------------------------------
+
+    @property
+    def status(self) -> str:
+        return self._status
+
+    @property
+    def error_message(self) -> str | None:
+        # Only ever set from fixed safe strings; never include exception text.
+        return self._error_message
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
+    def _set_error(self, message: str) -> None:
+        self._status = "error"
+        self._error_message = message
+
+    # -- lifecycle --------------------------------------------------------
+
+    async def start(self) -> None:
+        """Idempotently launch the browser and classify the landing page."""
+
+        if self._status != "idle" or self._closed:
+            return
+        try:
+            self._opener = (
+                self._browser_factory(self._settings)
+                if self._browser_factory is not None
+                else _default_browser_factory(self._settings, headful=False)
+            )
+            self._browser = await self._opener.__aenter__()
+            self._context = await self._browser.new_context(
+                user_agent=REALISTIC_USER_AGENT,
+                locale="en-AU",
+                timezone_id="Australia/Brisbane",
+                viewport={"width": 1280, "height": 800},
+                screen={"width": 1280, "height": 800},
+            )
+            await self._context.add_init_script(_STEALTH_JS)
+            if self._waf_store is not None:
+                cookies = self._waf_store.load()
+                if cookies:
+                    try:
+                        await self._context.add_cookies(cookies)
+                    except Exception:  # noqa: BLE001
+                        logger.warning("Could not restore WAF cookies; continuing fresh.")
+            self.page = await self._context.new_page()
+            try:
+                await self.page.goto(PORTAL_BASE, wait_until="domcontentloaded")
+            except Exception:  # noqa: BLE001 - navigation failure is a safe status
+                self._set_error("Portal could not be reached. Try again.")
+                return
+            await self._classify()
+            if self._status in ("idle", "challenge", "signin"):
+                self._monitor_task = asyncio.create_task(self._monitor())
+        except Exception:  # noqa: BLE001 - never raise to the caller
+            logger.warning("Verification session launch failed.", exc_info=True)
+            self._set_error("Could not start the verification browser. Try again.")
+            await self._teardown()
+
+    async def _classify(self) -> None:
+        """Inspect the page and set status; poll helper for the monitor."""
+
+        if self.page is None:
+            return
+        try:
+            if await self.page.locator(_ACCOUNT_LINK).count() > 0:
+                self._saw_account_link = True
+                await self._finish_success()
+            elif await self.page.locator("input").count() > 0:
+                self._status = "signin"
+            else:
+                self._status = "challenge"
+        except Exception:  # noqa: BLE001
+            self._set_error("Could not inspect the portal page. Try again.")
+
+    async def _finish_success(self) -> None:
+        self._status = "done"
+        self._error_message = None
+        if self._waf_store is not None and self._context is not None:
+            try:
+                cookies = await self._context.cookies()
+                self._waf_store.save(cookies)
+            except Exception:  # noqa: BLE001
+                logger.warning("Could not persist WAF cookies.")
+
+    async def _monitor(self) -> None:
+        """Poll page state every second until done/closed/error/timeout."""
+
+        deadline = asyncio.get_running_loop().time() + VERIFY_TIMEOUT_SECONDS
+        while not self._closed and self._status not in ("done", "error"):
+            if asyncio.get_running_loop().time() >= deadline:
+                self._set_error("Verification timed out. Start again.")
+                await self.close()
+                return
+            await self._wait_page(VERIFY_POLL_SECONDS)
+        if self._status == "done":
+            await self.close()
+
+    async def _wait_page(self, seconds: float) -> None:
+        """Sleep then re-classify (page-state transition poll)."""
+
+        await asyncio.sleep(seconds)
+        if not self._closed:
+            await self._classify()
+
+    # -- operator surface ---------------------------------------------------
+
+    async def screenshot(self) -> bytes | None:
+        if self.page is None or self._closed:
+            return None
+        try:
+            return await self.page.screenshot(type="png")
+        except Exception:  # noqa: BLE001
+            return None
+
+    async def click(self, x: int, y: int) -> None:
+        if self.page is None or self._closed or self._status == "error":
+            return
+        try:
+            await self.page.mouse.click(x, y)
+            await self.page.wait_for_timeout(CLICK_SETTLE_MS)
+        except Exception:  # noqa: BLE001
+            return
+        await self._classify()
+
+    async def fill_login(self, email: str, password: str) -> None:
+        """Fill and submit the sign-in form (same selectors as _login)."""
+
+        if self._status != "signin" or self.page is None or self._closed:
+            return
+        try:
+            email_selector = await _first_visible(self.page, EMAIL_SELECTORS)
+            password_selector = await _first_visible(self.page, PASSWORD_SELECTORS)
+            await self.page.fill(email_selector, email)
+            await self.page.fill(password_selector, password)
+            submit_selector = await _first_visible(self.page, SUBMIT_SELECTORS)
+            await self.page.click(submit_selector)
+        except Exception:  # noqa: BLE001 - never leak selector/exception detail
+            self._set_error("Could not submit the sign-in form. Try again.")
+            return
+        self._status = "challenge"  # sign-in submitted; watch for the dashboard
+
+    async def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        # Persist only when the portal was demonstrably reached.
+        if self._saw_account_link and self._waf_store is not None and self._context is not None:
+            try:
+                cookies = await self._context.cookies()
+                self._waf_store.save(cookies)
+            except Exception:  # noqa: BLE001
+                logger.warning("Could not persist WAF cookies.")
+        await self._teardown()
+
+    async def _teardown(self) -> None:
+        if self._monitor_task is not None:
+            self._monitor_task.cancel()
+            self._monitor_task = None
+        self.page = None
+        if self._context is not None:
+            try:
+                await self._context.close()
+            except Exception:  # noqa: BLE001
+                pass
+            self._context = None
+        if self._browser is not None:
+            try:
+                await self._browser.close()
+            except Exception:  # noqa: BLE001
+                pass
+            self._browser = None
+        if self._opener is not None:
+            try:
+                await self._opener.__aexit__(None, None, None)
+            except Exception:  # noqa: BLE001
+                pass
+            self._opener = None
+
+
+class VerificationManager:
+    """Owns the single interactive verification session."""
+
+    def __init__(
+        self,
+        settings: Settings,
+        waf_store: WafTokenStore | None,
+        browser_factory: BrowserOpener | None = None,
+    ) -> None:
+        self._settings = settings
+        self._waf_store = waf_store
+        self._browser_factory = browser_factory
+        self._session: VerificationSession | None = None
+
+    def _state(self, active: bool) -> dict:
+        session = self._session
+        return {
+            "active": active,
+            "status": session.status if session else "idle",
+            "error": session.error_message if session else None,
+        }
+
+    async def start(self) -> dict:
+        # One live session: a stale session is closed before starting anew.
+        if self._session is not None and not self._session.closed:
+            await self._session.close()
+        self._session = VerificationSession(
+            self._settings, self._waf_store, browser_factory=self._browser_factory
+        )
+        await self._session.start()
+        return self._state(self._session.status not in ("error", "idle"))
+
+    async def status(self) -> dict:
+        session = self._session
+        if session is None or session.closed:
+            return {"active": False, "status": session.status if session else "idle", "error": session.error_message if session else None}
+        return self._state(True)
+
+    async def screenshot(self) -> bytes | None:
+        if self._session is None or self._session.closed:
+            return None
+        return await self._session.screenshot()
+
+    async def click(self, x: int, y: int) -> dict:
+        if self._session is None or self._session.closed:
+            return {"clicked": False}
+        await self._session.click(x, y)
+        return {"clicked": True}
+
+    async def fill_login(self, email: str, password: str) -> dict:
+        if self._session is None or self._session.closed:
+            return {"submitted": False}
+        await self._session.fill_login(email, password)
+        return {"submitted": True}
+
+    async def stop(self) -> dict:
+        if self._session is not None:
+            await self._session.close()
+        return {"stopped": True}
+
+
 def _default_browser_factory(settings: Settings, headful: bool = False):
     """Launch Chromium; playwright is imported lazily here."""
 

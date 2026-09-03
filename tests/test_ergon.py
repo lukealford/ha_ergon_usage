@@ -17,6 +17,7 @@ Fake behaviour contract (mirrors real Playwright):
   portal URL, so ``wait_for_url`` raises ``FakeTimeoutError``.
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -74,6 +75,18 @@ class FakeTimeoutError(Exception):
     """Mimics ``playwright.async_api.TimeoutError`` for failed waits."""
 
 
+class FakeMouse:
+    """Records mouse click coordinates (verification click forwarding)."""
+
+    def __init__(self, page: "FakePage") -> None:
+        self.page = page
+        self.clicks: list[tuple[int, int]] = []
+
+    async def click(self, x: int, y: int) -> None:
+        self.clicks.append((x, y))
+        self.page.clicked.append(f"mouse:{x},{y}")
+
+
 class FakePage:
     """Fake Page: navigation, form fill, response events, content."""
 
@@ -85,6 +98,9 @@ class FakePage:
         self.listeners: list = []
         self.evaluate_result: object = []
         self.evaluate_calls: list[str] = []
+        self.mouse = FakeMouse(self)
+        self.screenshot_count = 0
+        self.screenshot_error: Exception | None = None
         self.visible_selectors: set[str] = {
             'input[type="email"]',
             'input[type="password"]',
@@ -118,6 +134,13 @@ class FakePage:
     def locator(self, selector: str) -> "FakePage._Locator":
         if selector == "h1, h2, h3":
             return FakePage._HeadingLocator(self)
+        if selector == "input":
+            # Any visible input-type selector means a rendered form.
+            count = 1 if any(
+                selector.startswith("input")
+                for selector in self.visible_selectors
+            ) else 0
+            return FakePage._Locator(count)
         return FakePage._Locator(1 if selector in self.visible_selectors else 0)
 
     class _HeadingLocator:
@@ -191,6 +214,12 @@ class FakePage:
         if "recharts-bar-rectangle" in script and "__react" not in script:
             return 0
         return self.evaluate_result
+
+    async def screenshot(self, type: str = "png") -> bytes:
+        self.screenshot_count += 1
+        if self.screenshot_error is not None:
+            raise self.screenshot_error
+        return b"fake-png-bytes"
 
     async def content(self) -> str:
         return self.scenario.page_html
@@ -708,3 +737,233 @@ class TestStealthConstants:
         assert context_kwargs["locale"] == "en-AU"
         assert context_kwargs["timezone_id"] == "Australia/Brisbane"
         assert context_kwargs["viewport"] == {"width": 1280, "height": 800}
+
+
+class _VerifyScenario:
+    """Fake backend for VerificationSession: one tracked page/context."""
+
+    def __init__(self) -> None:
+        self.page = FakePage(Scenario())
+        self.context = FakeContext(self.page.scenario)
+        self.context_cookies: list[dict] = []
+        self.context_created: list[FakeContext] = []
+        self.browser = FakeBrowser(self.page.scenario)
+        # Route every new_context() to the tracked context.
+        async def _new_context(**_kwargs) -> FakeContext:
+            return self.context
+        self.browser.new_context = _new_context  # type: ignore[method-assign]
+        # Route context.new_page() to the tracked page.
+        async def _new_page() -> FakePage:
+            self.page.scenario.pages_created += 1
+            return self.page
+        self.context.new_page = _new_page  # type: ignore[method-assign]
+
+    def factory(self, _settings: object):
+        browser = self.browser
+
+        class _Ctx:
+            async def __aenter__(self_inner):
+                return browser
+
+            async def __aexit__(self_inner, *_exc) -> None:
+                await browser.close()
+
+        return _Ctx()
+
+
+def _ver_store(tmp_path):
+    from app.ergon import WafTokenStore
+
+    return WafTokenStore(tmp_path / "waf_state.json")
+
+
+class TestVerificationSession:
+    @pytest.mark.asyncio
+    async def test_challenge_state_detected_when_no_inputs(self, tmp_path):
+        from app.ergon import VerificationSession
+
+        fake = _VerifyScenario()
+        fake.page.visible_selectors = set()  # challenge page: hidden inputs only
+        session = VerificationSession(Settings(), None, browser_factory=fake.factory)
+        await session.start()
+        assert session.status == "challenge"
+        await session.close()
+
+    @pytest.mark.asyncio
+    async def test_signin_state_detected_with_login_inputs(self, tmp_path):
+        from app.ergon import VerificationSession
+
+        fake = _VerifyScenario()
+        session = VerificationSession(Settings(), None, browser_factory=fake.factory)
+        await session.start()
+        assert session.status == "signin"
+        await session.close()
+
+    @pytest.mark.asyncio
+    async def test_done_immediately_when_account_link_present(self, tmp_path):
+        from app.ergon import VerificationSession
+
+        fake = _VerifyScenario()
+        cookie = {"name": "aws-waf-token", "domain": ".myaccount.ergonretail.com.au",
+                  "expires": 9999999999.0, "value": "v"}
+        store = _ver_store(tmp_path)
+        fake.context_cookies = [cookie]
+        async def _cookies() -> list[dict]:
+            return fake.context_cookies
+        fake.context.cookies = _cookies  # type: ignore[method-assign]
+        fake.page.visible_selectors = {'a[href*="/portal/A-"]'}
+        session = VerificationSession(Settings(), store, browser_factory=fake.factory)
+        await session.start()
+        assert session.status == "done"
+        # Session valid: cookies saved to the store file.
+        assert store.load() == [cookie]
+        await session.close()
+
+    @pytest.mark.asyncio
+    async def test_start_is_idempotent(self, tmp_path):
+        from app.ergon import VerificationSession
+
+        fake = _VerifyScenario()
+        session = VerificationSession(Settings(), None, browser_factory=fake.factory)
+        await session.start()
+        await session.start()
+        assert fake.page.scenario.pages_created == 1
+        await session.close()
+
+    @pytest.mark.asyncio
+    async def test_click_forwards_coordinates_and_reclassifies(self, tmp_path):
+        from app.ergon import VerificationSession
+
+        fake = _VerifyScenario()
+        fake.page.visible_selectors = set()  # starts as challenge
+        session = VerificationSession(Settings(), None, browser_factory=fake.factory)
+        await session.start()
+
+        original_mouse_click = fake.page.mouse.click
+
+        async def click_solves(x, y):
+            await original_mouse_click(x, y)
+            fake.page.visible_selectors = {'input[type="email"]'}
+
+        fake.page.mouse.click = click_solves  # type: ignore[method-assign]
+        await session.click(400, 300)
+        assert fake.page.mouse.clicks == [(400, 300)]
+        assert session.status == "signin"  # reclassified after the click
+        await session.close()
+
+    @pytest.mark.asyncio
+    async def test_screenshot_returns_png_bytes_or_none(self, tmp_path):
+        from app.ergon import VerificationSession
+
+        fake = _VerifyScenario()
+        session = VerificationSession(Settings(), None, browser_factory=fake.factory)
+        assert await session.screenshot() is None  # not started
+        await session.start()
+        assert await session.screenshot() == b"fake-png-bytes"
+        await session.close()
+        assert await session.screenshot() is None
+
+    @pytest.mark.asyncio
+    async def test_error_status_on_navigation_failure(self, tmp_path):
+        from app.ergon import VerificationSession
+
+        fake = _VerifyScenario()
+        fake.page.scenario.errors[LOGIN_URL] = RuntimeError("net down")
+        session = VerificationSession(Settings(), None, browser_factory=fake.factory)
+        await session.start()
+        assert session.status == "error"
+        message = session.error_message or ""
+        assert "net down" not in message  # sanitized
+        await session.close()
+
+    @pytest.mark.asyncio
+    async def test_close_without_account_link_does_not_save_cookies(self, tmp_path):
+        from app.ergon import VerificationSession
+
+        fake = _VerifyScenario()
+        store = _ver_store(tmp_path)
+        fake.context_cookies = [{"name": "aws-waf-token", "domain": ".ergonretail.com.au",
+                                 "expires": 9999999999.0, "value": "v"}]
+        session = VerificationSession(Settings(), store, browser_factory=fake.factory)
+        await session.start()
+        await session.close()
+        assert store.load() is None
+
+    @pytest.mark.asyncio
+    async def test_fill_login_submits_then_reaches_done(self, tmp_path, monkeypatch):
+        import app.ergon as ergon_mod
+        from app.ergon import VerificationSession
+
+        monkeypatch.setattr(ergon_mod, "VERIFY_POLL_SECONDS", 0.01)
+        fake = _VerifyScenario()
+        session = VerificationSession(Settings(), None, browser_factory=fake.factory)
+        await session.start()  # status "signin"
+        await session.fill_login("e@example.com", "pw")
+        assert ("input[type=\"email\"]", "e@example.com") in fake.page.filled
+        # Submit takes the operator to a dashboard; the monitor spots it.
+        fake.page.visible_selectors = {'a[href*="/portal/A-"]'}
+        for _ in range(100):
+            if session.status == "done":
+                break
+            await asyncio.sleep(0.02)
+        assert session.status == "done"
+        await session.close()
+
+    @pytest.mark.asyncio
+    async def test_monitor_polls_until_done(self, tmp_path, monkeypatch):
+        import app.ergon as ergon_mod
+        from app.ergon import VerificationSession
+
+        monkeypatch.setattr(ergon_mod, "VERIFY_POLL_SECONDS", 0.01)
+        fake = _VerifyScenario()
+        session = VerificationSession(Settings(), None, browser_factory=fake.factory)
+        await session.start()  # "signin"
+        fake.page.visible_selectors = {'a[href*="/portal/A-"]'}
+        for _ in range(100):
+            if session.status == "done":
+                break
+            await asyncio.sleep(0.02)
+        assert session.status == "done"
+        await session.close()
+
+
+class TestVerificationManager:
+    @pytest.mark.asyncio
+    async def test_single_live_session_and_sanitized_state(self, tmp_path):
+        from app.ergon import VerificationManager
+
+        fake = _VerifyScenario()
+        manager = VerificationManager(Settings(), None, browser_factory=fake.factory)
+        state = await manager.start()
+        assert state["status"] == "signin"
+        assert set(state) == {"active", "status", "error"}
+        # Starting again closes the old session's browser before starting.
+        fake.browser.closed = False
+        await manager.start()
+        assert fake.browser.closed
+        await manager.stop()
+
+    @pytest.mark.asyncio
+    async def test_stop_reports_and_clears(self, tmp_path):
+        from app.ergon import VerificationManager
+
+        fake = _VerifyScenario()
+        manager = VerificationManager(Settings(), None, browser_factory=fake.factory)
+        await manager.start()
+        result = await manager.stop()
+        assert result["stopped"] is True
+        state = await manager.status()
+        assert state["active"] is False
+
+    @pytest.mark.asyncio
+    async def test_manager_never_exposes_cookies(self, tmp_path):
+        from app.ergon import VerificationManager
+
+        fake = _VerifyScenario()
+        fake.context_cookies = [{"name": "aws-waf-token", "domain": ".ergonretail.com.au",
+                                 "expires": 9999999999.0, "value": "super-secret"}]
+        manager = VerificationManager(Settings(), None, browser_factory=fake.factory)
+        state = await manager.start()
+        blob = json.dumps(state)
+        assert "super-secret" not in blob
+        await manager.stop()
