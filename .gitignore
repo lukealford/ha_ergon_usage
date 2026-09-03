@@ -10,3 +10,4 @@ options.json
 # WAF token state (live cookies) — never commit.
 waf_state.json
 *.tmp
+ergon_usage.sqlite3
