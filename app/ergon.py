@@ -31,18 +31,19 @@ TARIFF_URL_TEMPLATE = PORTAL_BASE + "/{account}/tariff-metering"
 # Bounded wait (ms) for the portal to load after submitting credentials.
 LOGIN_WAIT_MS = 15_000
 
-# Ordered, explicit attribute selectors for the login form.  There are no
-# visible label texts to rely on, so each entry is a CSS attribute selector:
-# the semantic ``type``/``autocomplete`` attributes first, then matching
-# ``name``/``id`` fallbacks.  The first selector that resolves to an element
-# is used.
+# Ordered, explicit selectors for the login form.  The portal's inputs are
+# only distinguishable by their aria-labels ("Email Address" / "Password"),
+# so those come first, with type/name/id fallbacks.  The first selector that
+# resolves to an element is used.
 EMAIL_SELECTORS = (
+    'input[aria-label="Email Address"]',
     'input[type="email"]',
     'input[name="email"]',
     'input[id="email"]',
     'input[autocomplete="username"]',
 )
 PASSWORD_SELECTORS = (
+    'input[aria-label="Password"]',
     'input[type="password"]',
     'input[name="password"]',
     'input[id="password"]',
@@ -200,7 +201,7 @@ class _AuthenticatedRun:
             self._opener = None
 
     async def _login(self, page) -> None:
-        await page.goto(LOGIN_URL)
+        await page.goto(LOGIN_URL, wait_until="domcontentloaded")
         email_selector = await _first_visible(page, EMAIL_SELECTORS)
         password_selector = await _first_visible(page, PASSWORD_SELECTORS)
         await page.fill(email_selector, self._settings.ergon_email)
