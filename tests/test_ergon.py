@@ -19,6 +19,7 @@ Fake behaviour contract (mirrors real Playwright):
 
 import json
 import logging
+import re
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from decimal import Decimal
@@ -97,8 +98,43 @@ class FakePage:
         async def count(self) -> int:
             return self._count
 
+        async def all(self) -> list:
+            return []
+
+    class _FakeHeading:
+        """One heading element returned by locator(...).all()."""
+
+        def __init__(self, page: "FakePage", text: str) -> None:
+            self._page = page
+            self.text = text
+
+        async def text_content(self) -> str:
+            return self.text
+
+        async def click(self, timeout=None) -> None:
+            self._page.clicked.append(self.text)
+            self._page.scenario.navigations.append(f"click:heading:{self.text}")
+
     def locator(self, selector: str) -> "FakePage._Locator":
+        if selector == "h1, h2, h3":
+            return FakePage._HeadingLocator(self)
         return FakePage._Locator(1 if selector in self.visible_selectors else 0)
+
+    class _HeadingLocator:
+        """Locator for heading tags; yields headings found in page_html."""
+
+        _HEADING_RE = re.compile(r"<h([1-3])[^>]*>(.*?)</h\1>", re.DOTALL)
+
+        def __init__(self, page: "FakePage") -> None:
+            self._page = page
+
+        async def all(self) -> list["FakePage._FakeHeading"]:
+            html = self._page.scenario.page_html
+            headings = []
+            for _level, inner in self._HEADING_RE.findall(html):
+                text = " ".join(re.sub(r"<[^>]+>", "", inner).split())
+                headings.append(FakePage._FakeHeading(self._page, text))
+            return headings
 
     def on(self, event: str, handler) -> None:
         assert event == "response"
@@ -440,6 +476,19 @@ class TestFetchRates:
             assert isinstance(rate, TariffRate)
             assert rate.account_id == "A-TEST123"
             assert rate.per_kwh_aud > 0
+
+    @pytest.mark.asyncio
+    async def test_fetch_rates_expands_tariff_accordions_before_content(self):
+        # The live portal renders tariffs as collapsed accordions; fetch_rates
+        # must click every tariff heading BEFORE reading page.content().
+        scenario = Scenario()
+        scenario.page_html = TARIFF_HTML
+        await make_client(scenario).fetch_rates()
+        tariff_clicks = [
+            nav for nav in scenario.navigations if "Tariff 11" in nav or "Tariff 33" in nav
+        ]
+        assert tariff_clicks, "expected tariff heading clicks before content read"
+        assert scenario.navigations.index(tariff_clicks[0]) < len(scenario.navigations)
 
     @pytest.mark.asyncio
     async def test_fetch_rates_observed_at_is_utc_now(self):

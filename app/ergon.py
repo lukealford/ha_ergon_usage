@@ -239,7 +239,7 @@ class ErgonClient:
         return await self._fetch_usage(day)
 
     async def fetch_rates(self) -> tuple[TariffRate, ...]:
-        """Fetch the tariff-metering page and parse its rate cards."""
+        """Fetch the tariff-metering page and parse its rate sections."""
 
         observed_at = datetime.now(timezone.utc)
         async with self._run() as portal:
@@ -247,6 +247,26 @@ class ErgonClient:
             page = await portal.context.new_page()
             try:
                 await page.goto(url)
+                # The live portal renders tariffs as collapsed accordions:
+                # expand every heading naming a tariff before reading the DOM,
+                # mirroring scripts/diagnose_rates_page.py.  Clicks are
+                # best-effort; a failure leaves the section collapsed.
+                try:
+                    headings = await page.locator("h1, h2, h3").all()
+                except Exception:
+                    headings = []
+                for heading in headings:
+                    try:
+                        text = ((await heading.text_content()) or "").strip()
+                    except Exception:
+                        continue
+                    if "tariff" not in text.lower():
+                        continue
+                    try:
+                        await heading.click(timeout=3_000)
+                        await page.wait_for_timeout(1_000)
+                    except Exception:
+                        logger.debug("Tariff accordion click failed: %s", text[:40])
                 html = await page.content()
             finally:
                 await page.close()
