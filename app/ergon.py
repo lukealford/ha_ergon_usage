@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 LOGIN_URL = "https://login.myaccount.ergonretail.com.au/"
 PORTAL_BASE = "https://myaccount.ergonretail.com.au/portal"
-USAGE_URL_TEMPLATE = PORTAL_BASE + "/{account}/usage"
+USAGE_URL_TEMPLATE = PORTAL_BASE + "/{account}/tariff-metering/usage"
 TARIFF_URL_TEMPLATE = PORTAL_BASE + "/{account}/tariff-metering"
 
 # Bounded wait (ms) for the portal to load after submitting credentials.

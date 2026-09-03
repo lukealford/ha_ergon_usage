@@ -215,12 +215,12 @@ def make_client(scenario: Scenario) -> ErgonClient:
 
 
 def rolling_url(account: str = "A-TEST123") -> str:
-    return f"https://myaccount.ergonretail.com.au/portal/{account}/usage?periodDays=3"
+    return f"https://myaccount.ergonretail.com.au/portal/{account}/tariff-metering/usage?periodDays=3"
 
 
 def day_url(day: date, account: str = "A-TEST123") -> str:
     return (
-        f"https://myaccount.ergonretail.com.au/portal/{account}/usage"
+        f"https://myaccount.ergonretail.com.au/portal/{account}/tariff-metering/usage"
         f"?day={day.strftime('%d/%m/%Y')}"
     )
 
