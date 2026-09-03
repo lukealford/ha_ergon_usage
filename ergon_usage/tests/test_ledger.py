@@ -133,6 +133,48 @@ def test_equivalent_rate_decimal_scales_are_unchanged(ledger):
     assert (result.changed, result.unchanged, result.earliest_changed) == (0, 1, None)
 
 
+def test_corrected_per_kwh_rate_recalculates_from_its_effective_hour(ledger):
+    first = START + timedelta(minutes=15)
+    corrected = START + timedelta(hours=2, minutes=15)
+    ledger.record_rates(
+        [
+            TariffRate(ACCOUNT, TARIFF, first, Decimal("0.20"), Decimal("1.80")),
+            TariffRate(ACCOUNT, TARIFF, corrected, Decimal("0.30"), Decimal("1.80")),
+        ]
+    )
+
+    result = ledger.record_rates(
+        [TariffRate(ACCOUNT, TARIFF, corrected, Decimal("0.20"), Decimal("1.80"))]
+    )
+
+    assert (result.changed, result.unchanged, result.earliest_changed) == (
+        1,
+        0,
+        START + timedelta(hours=3),
+    )
+
+
+def test_corrected_supply_rate_recalculates_from_its_next_midnight(ledger):
+    first = START + timedelta(minutes=15)
+    corrected = START + timedelta(hours=2, minutes=15)
+    ledger.record_rates(
+        [
+            TariffRate(ACCOUNT, TARIFF, first, Decimal("0.20"), Decimal("1.80")),
+            TariffRate(ACCOUNT, TARIFF, corrected, Decimal("0.20"), Decimal("2.00")),
+        ]
+    )
+
+    result = ledger.record_rates(
+        [TariffRate(ACCOUNT, TARIFF, corrected, Decimal("0.20"), Decimal("1.80"))]
+    )
+
+    assert (result.changed, result.unchanged, result.earliest_changed) == (
+        1,
+        0,
+        START + timedelta(hours=14),
+    )
+
+
 def test_cost_replacement_removes_stale_later_components_and_preserves_earlier_ones(ledger):
     ledger.replace_cost_components_from(
         ACCOUNT,

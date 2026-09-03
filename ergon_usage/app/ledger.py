@@ -58,7 +58,7 @@ class RateUpsertResult:
 
     @property
     def earliest_affected_boundary(self) -> datetime | None:
-        """The stored observation boundary; Task 5 will resolve effective boundaries."""
+        """The earliest effective rate boundary requiring recalculation."""
 
         return self.earliest_changed
 
@@ -251,7 +251,7 @@ class Ledger:
                     """,
                     (rate.account_id, rate.tariff, observed_at, *values),
                 )
-                boundary = _rate_change_boundary(previous, rate)
+                boundary = _rate_change_boundary(row, previous, rate)
                 if boundary is not None:
                     earliest_changed = _earlier(earliest_changed, boundary)
         return RateUpsertResult(changed, unchanged, earliest_changed)
@@ -423,7 +423,20 @@ def _rate_values_match(row: sqlite3.Row, rate: TariffRate) -> bool:
     return Decimal(row["per_kwh_aud"]) == rate.per_kwh_aud and stored_supply == rate.daily_supply_aud
 
 
-def _rate_change_boundary(previous: sqlite3.Row | None, rate: TariffRate) -> datetime | None:
+def _rate_change_boundary(
+    existing: sqlite3.Row | None, previous: sqlite3.Row | None, rate: TariffRate
+) -> datetime | None:
+    if existing is not None:
+        if Decimal(existing["per_kwh_aud"]) != rate.per_kwh_aud:
+            return effective_usage_boundary(rate.observed_at)
+        existing_supply = (
+            Decimal(existing["daily_supply_aud"])
+            if existing["daily_supply_aud"] is not None
+            else None
+        )
+        if existing_supply != rate.daily_supply_aud:
+            return effective_supply_boundary(rate.observed_at)
+        return None
     if previous is None or Decimal(previous["per_kwh_aud"]) != rate.per_kwh_aud:
         return effective_usage_boundary(rate.observed_at)
     previous_supply = (
