@@ -23,6 +23,7 @@ Usage:
 import argparse
 import asyncio
 import json
+import logging
 import os
 import re
 import sys
@@ -167,4 +168,5 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     sys.exit(main())
