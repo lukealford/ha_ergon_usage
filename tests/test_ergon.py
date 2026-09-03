@@ -148,6 +148,9 @@ class FakePage:
         """Default to no chart payloads so chart extraction is a no-op."""
 
         self.evaluate_calls.append(script)
+        # The shape-count diagnostic query must return a number, not rows.
+        if "querySelectorAll" in script:
+            return 0
         return self.evaluate_result
 
     async def content(self) -> str:
@@ -305,7 +308,19 @@ class TestFetchRolling:
             '<div data-tariff="Tariff 11" data-timestamp="31 Aug 2026 12:00AM" '
             'data-kwh="1.25"></div>'
         )
-        result = await make_client(scenario).fetch_rolling()
+
+        async def evaluate(self: FakePage, script: str) -> object:
+            self.evaluate_calls.append(script)
+            # No chart on the page: payload read yields [], shape count 0.
+            if "querySelectorAll" in script:
+                return 0
+            return []
+
+        FakePage.evaluate = evaluate  # type: ignore[method-assign]
+        try:
+            result = await make_client(scenario).fetch_rolling()
+        finally:
+            del FakePage.evaluate  # restore the class default
         assert result.source == "dom"
         assert len(result.readings) == 1
         assert result.readings[0].kwh == Decimal("1.25")

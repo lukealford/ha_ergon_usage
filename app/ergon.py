@@ -226,23 +226,20 @@ class ErgonClient:
                 # The live portal renders usage as a Recharts chart; hourly
                 # rows live in the React props of each bar shape.  Read them
                 # while the page is open (returns [] on any failure).  Also
-                # capture a shape count for diagnostics when nothing is read.
+                # capture the shape count so a failed read is self-describing.
                 chart_rows = await _read_chart_payloads(page)
-                if not chart_rows:
-                    try:
-                        shape_count = await page.evaluate(
-                            "document.querySelectorAll('.recharts-bar-rectangle path,"
-                            " .recharts-bar-rectangle rect').length"
-                        )
-                        logger.info(
-                            "Chart payload read empty; shape count on page: %s",
-                            shape_count,
-                        )
-                    except Exception:  # noqa: BLE001
-                        logger.info("Chart payload read empty; page has no chart.")
+                try:
+                    chart_shape_count = await page.evaluate(
+                        "document.querySelectorAll('.recharts-bar-rectangle path,"
+                        " .recharts-bar-rectangle rect').length"
+                    )
+                except Exception:  # noqa: BLE001
+                    chart_shape_count = -1
             finally:
                 await page.close()
-        return _resolve_readings(portal.account_id, candidates, html, chart_rows, day)
+        return _resolve_readings(
+            portal.account_id, candidates, html, chart_rows, chart_shape_count, day
+        )
 
     def _run(self):
         """Context manager performing login and account discovery."""
@@ -422,6 +419,7 @@ def _resolve_readings(
     candidates: list[CapturedJson],
     html: str,
     chart_rows: list[dict],
+    chart_shape_count: int,
     day: date | None,
 ) -> FetchResult:
     """Prefer structured payload, then Recharts rows, then DOM extraction."""
@@ -434,8 +432,15 @@ def _resolve_readings(
             readings = extract_chart_payloads(chart_rows, account_id, day)
             source = "chart"
         except ExtractionError:
-            readings = extract_dom(html, account_id, day)
-            source = "dom"
+            try:
+                readings = extract_dom(html, account_id, day)
+                source = "dom"
+            except ExtractionError as error:
+                # All three paths failed: make the failure self-describing
+                # with the on-page chart state from the chart attempt.
+                raise ExtractionError(
+                    f"{error.safe_message} (chart shapes on page: {chart_shape_count})"
+                ) from None
     return FetchResult(account_id=account_id, readings=tuple(readings), source=source)
 
 
