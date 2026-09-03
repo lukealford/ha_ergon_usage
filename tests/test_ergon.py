@@ -333,9 +333,9 @@ class TestFetchRolling:
             if "recharts-bar-rectangle" in script and "__react" not in script:
                 return 2  # shape count
             return [
-                {"series": "Tariff 11", "payload": {"date": "31 Aug 12:00AM", "day": "2026-08-30 14:00:00+00:00", "RTC11": 1.25}},
-                {"series": "Tariff 11", "payload": {"date": "31 Aug 01:00AM", "day": "2026-08-30 15:00:00+00:00", "RTC11": 0.5}},
-                {"series": "Tariff 33", "payload": {"date": "31 Aug 01:00AM", "day": "2026-08-30 15:00:00+00:00", "RTC33": 0.75}},
+                {"series": "Tariff 11", "dataKey": "RTC11", "payload": {"date": "31 Aug 12:00AM", "day": "2026-08-30 14:00:00+00:00", "RTC11": 1.25}},
+                {"series": "Tariff 11", "dataKey": "RTC11", "payload": {"date": "31 Aug 01:00AM", "day": "2026-08-30 15:00:00+00:00", "RTC11": 0.5}},
+                {"series": "Tariff 33", "dataKey": "RTC33", "payload": {"date": "31 Aug 01:00AM", "day": "2026-08-30 15:00:00+00:00", "RTC33": 0.75}},
             ]
 
         monkeypatch.setattr(FakePage, "evaluate", evaluate)
