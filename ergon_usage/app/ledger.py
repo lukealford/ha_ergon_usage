@@ -279,6 +279,31 @@ class Ledger:
             for row in rows
         ]
 
+    def readings_from(
+        self, account_id: str, tariff: str, earliest: datetime | None
+    ) -> list[UsageReading]:
+        """Return stored readings for one account/tariff, optionally bounded."""
+
+        account_id = _require_text(account_id, "account_id")
+        tariff = _require_text(tariff, "tariff")
+        earliest_timestamp = _timestamp(earliest) if earliest is not None else None
+        query = """
+            SELECT interval_start, kwh FROM readings
+            WHERE account_id = ? AND tariff = ?
+        """
+        parameters: tuple[str, ...] = (account_id, tariff)
+        if earliest_timestamp is not None:
+            query += " AND interval_start >= ?"
+            parameters += (earliest_timestamp,)
+        query += " ORDER BY interval_start"
+        rows = self._connection.execute(query, parameters).fetchall()
+        return [
+            UsageReading(
+                account_id, tariff, _from_timestamp(row["interval_start"]), Decimal(row["kwh"])
+            )
+            for row in rows
+        ]
+
     def cost_components_from(
         self, account_id: str, tariff: str, earliest: datetime | None
     ) -> list[CostComponent]:
