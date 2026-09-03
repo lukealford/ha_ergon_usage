@@ -1,6 +1,7 @@
 """Tests for the Home Assistant Supervisor statistics WebSocket client."""
 
 from dataclasses import dataclass
+import asyncio
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -25,6 +26,7 @@ class FakeHAServer:
     result_success: bool = True
     drop_after_auth: bool = False
     drop_after_command: bool = False
+    hang_after_auth_required: bool = False
 
 
 async def _make_app(server: FakeHAServer) -> web.Application:
@@ -32,6 +34,9 @@ async def _make_app(server: FakeHAServer) -> web.Application:
         ws = web.WebSocketResponse()
         await ws.prepare(request)
         await ws.send_json({"type": "auth_required"})
+        if server.hang_after_auth_required:
+            await asyncio.Event().wait()
+            return ws
         server.auth_message = await ws.receive_json()
         if server.auth_reply == "invalid":
             await ws.send_json({"type": "auth_invalid"})
@@ -140,7 +145,6 @@ class TestImportStatistics:
                     StatisticMetadata("ergon:x", "X", "energy", "kWh"), usage_points()
                 )
         assert TOKEN not in caplog.text
-        assert TOKEN not in str(ErgonImportError("Unable to import Ergon usage data."))
 
     @pytest.mark.asyncio
     async def test_unsuccessful_result_raises_import_error(self, ws_server, caplog):
@@ -189,3 +193,15 @@ class TestImportStatistics:
             )
         assert TOKEN not in str(exc_info.value)
         assert TOKEN not in exc_info.value.safe_message
+
+    @pytest.mark.asyncio
+    async def test_unresponsive_server_raises_import_error_within_timeout(self, ws_server, caplog):
+        ws_server.hang_after_auth_required = True
+        client = HomeAssistantClient(TOKEN, base_url=ws_server.url, receive_timeout=0.2)
+        with caplog.at_level("ERROR"):
+            with pytest.raises(ErgonImportError):
+                await client.import_statistics(
+                    StatisticMetadata("ergon:x", "X", "energy", "kWh"), usage_points()
+                )
+        assert TOKEN not in caplog.text
+        assert "hang_after_auth_required" not in caplog.text

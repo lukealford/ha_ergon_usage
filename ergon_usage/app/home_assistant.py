@@ -1,5 +1,6 @@
 """Home Assistant Supervisor statistics import over the WebSocket API."""
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -15,6 +16,8 @@ from ergon_usage.app.models import StatisticPoint
 _LOGGER = logging.getLogger(__name__)
 
 _WS_URL = "ws://supervisor/core/websocket"
+_CONNECT_TIMEOUT = 30.0
+_RECEIVE_TIMEOUT = 30.0
 
 
 @dataclass(frozen=True)
@@ -36,6 +39,8 @@ class HomeAssistantClient:
         session_factory=None,
         *,
         base_url: str = _WS_URL,
+        connect_timeout: float = _CONNECT_TIMEOUT,
+        receive_timeout: float = _RECEIVE_TIMEOUT,
     ) -> None:
         token = getattr(settings_or_token, "supervisor_token", None)
         if token is None:
@@ -45,6 +50,8 @@ class HomeAssistantClient:
         self._token = token
         self._session_factory = session_factory or aiohttp.ClientSession
         self._base_url = base_url
+        self._connect_timeout = connect_timeout
+        self._receive_timeout = receive_timeout
 
     async def import_statistics(
         self,
@@ -62,10 +69,12 @@ class HomeAssistantClient:
             stats.append(entry)
 
         try:
-            async with self._session_factory() as session:
+            timeout = aiohttp.ClientTimeout(total=self._connect_timeout)
+            async with self._session_factory(timeout=timeout) as session:
                 async with session.ws_connect(
-                    f"{self._base_url}",
+                    self._base_url,
                     headers={"Authorization": f"Bearer {self._token}"},
+                    timeout=aiohttp.ClientWSTimeout(ws_close=self._connect_timeout),
                 ) as ws:
                     await self._authenticate(ws)
                     await self._send_import(ws, metadata, stats)
@@ -74,8 +83,6 @@ class HomeAssistantClient:
         except (aiohttp.ClientError, ConnectionError, OSError) as error:
             _LOGGER.debug("Statistics import connection failed: %s", type(error).__name__)
             raise ImportError("Unable to connect to Home Assistant to import statistics.") from error
-        except json.JSONDecodeError as error:
-            raise ImportError("Home Assistant returned an invalid response during import.") from error
 
     async def _authenticate(self, ws: aiohttp.ClientWebSocketResponse) -> None:
         message = await self._receive_json(ws)
@@ -117,7 +124,11 @@ class HomeAssistantClient:
 
     async def _receive_json(self, ws: aiohttp.ClientWebSocketResponse) -> dict:
         while True:
-            message = await ws.receive()
+            try:
+                message = await ws.receive(timeout=self._receive_timeout)
+            except asyncio.TimeoutError:
+                _LOGGER.debug("Statistics import receive timed out")
+                raise ImportError("Home Assistant did not respond in time during import.")
             if message.type in (
                 aiohttp.WSMsgType.CLOSE,
                 aiohttp.WSMsgType.CLOSING,
