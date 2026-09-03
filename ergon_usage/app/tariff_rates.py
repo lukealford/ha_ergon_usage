@@ -81,7 +81,11 @@ class _TariffPageParser(HTMLParser):
         if tag in _HEADING_TAGS:
             self._inside_heading = False
             self._finish_heading()
+            self._pop_stack_until(tag)
             return
+        self._pop_stack_until(tag)
+
+    def _pop_stack_until(self, tag: str) -> None:
         while self._stack:
             frame = self._stack.pop()
             if frame["is_card"]:

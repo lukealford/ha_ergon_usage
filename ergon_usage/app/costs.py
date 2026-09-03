@@ -31,12 +31,32 @@ def _select_period(
     return best
 
 
-def _supply_dates(period: RatePeriod, newest_usage: datetime) -> list[datetime]:
+def _next_supply_boundary(
+    periods: Sequence[RatePeriod], period: RatePeriod
+) -> datetime | None:
+    """Earliest supply boundary among later periods with a supply rate."""
+
+    later = [
+        other.supply_effective_at
+        for other in periods
+        if other.daily_supply_aud is not None
+        and other.supply_effective_at > period.supply_effective_at
+    ]
+    return min(later) if later else None
+
+
+def _supply_dates(
+    period: RatePeriod,
+    newest_usage: datetime,
+    superseded_at: datetime | None = None,
+) -> list[datetime]:
     """Brisbane midnights for each complete eligible date, UTC values.
 
     Dates run from the period's supply boundary through the day after the
     newest known usage date (a supply day completes at the following
-    midnight), in Brisbane local time.
+    midnight), in Brisbane local time.  When a later period with a supply
+    rate supersedes this one, the window ends just before that period's
+    supply boundary so each date is charged exactly once.
     """
 
     if period.daily_supply_aud is None:
@@ -48,6 +68,14 @@ def _supply_dates(period: RatePeriod, newest_usage: datetime) -> list[datetime]:
     last_chargeable = datetime(
         end_local.year, end_local.month, end_local.day, tzinfo=BRISBANE
     ) + timedelta(days=1)
+    if superseded_at is not None:
+        # The superseding period charges from its own boundary; this period
+        # stops the midnight before it.
+        last_local = superseded_at.astimezone(BRISBANE)
+        cap = datetime(
+            last_local.year, last_local.month, last_local.day, tzinfo=BRISBANE
+        ) - timedelta(days=1)
+        last_chargeable = min(last_chargeable, cap)
     dates: list[datetime] = []
     current = start_local.replace(hour=0, minute=0, second=0, microsecond=0)
     while current <= last_chargeable:
@@ -95,7 +123,8 @@ def calculate_costs(
         for period in periods:
             if period.daily_supply_aud is None:
                 continue
-            for midnight in _supply_dates(period, newest_usage):
+            superseded_at = _next_supply_boundary(periods, period)
+            for midnight in _supply_dates(period, newest_usage, superseded_at):
                 existing = components.get(midnight)
                 supply_aud = period.daily_supply_aud
                 if existing is None:

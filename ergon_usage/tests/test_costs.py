@@ -1,6 +1,6 @@
 """Tests for non-retroactive tariff cost calculation."""
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -83,6 +83,36 @@ def test_supply_is_added_once_from_next_midnight():
     assert charged[0].supply_aud == Decimal("1.80")
 
 
+def test_overlapping_supply_periods_do_not_double_charge():
+    # Both periods carry daily supply; the newer period must supersede the
+    # older one from its own supply boundary so each date charges once.
+    readings = [
+        reading(brisbane(2026, 9, 5, 12), "1.00"),
+        reading(brisbane(2026, 9, 6, 12), "1.00"),
+    ]
+    periods = [
+        rate(observed="2026-08-31T00:00+10:00", per_kwh="0.20", daily="1.80"),
+        rate(observed="2026-09-05T00:00+10:00", per_kwh="0.30", daily="2.00"),
+    ]
+    components = calculate_costs(readings, periods)
+    supply_by_date = {
+        c.interval_start.astimezone(BRISBANE).date(): c.supply_aud
+        for c in components
+        if c.supply_aud
+    }
+    # Supply boundaries: 2026-09-01 (old rate) and 2026-09-06 (new rate).
+    # Newest usage date is 2026-09-06, so the last chargeable date is 09-07.
+    assert supply_by_date == {
+        date(2026, 9, 1): Decimal("1.80"),
+        date(2026, 9, 2): Decimal("1.80"),
+        date(2026, 9, 3): Decimal("1.80"),
+        date(2026, 9, 4): Decimal("1.80"),
+        date(2026, 9, 5): Decimal("1.80"),
+        date(2026, 9, 6): Decimal("2.00"),
+        date(2026, 9, 7): Decimal("2.00"),
+    }
+
+
 def test_supply_does_not_depend_on_midnight_energy_reading():
     readings = [
         reading(brisbane(2026, 8, 31, hour), "1.00")
@@ -127,8 +157,8 @@ def test_supply_charged_once_per_day_through_newest_usage_date():
     charged = [c for c in calculate_costs(readings, periods) if c.supply_aud]
     dates = {c.interval_start.astimezone(BRISBANE).date() for c in charged}
     assert dates == {
-        __import__("datetime").date(2026, 9, 1),
-        __import__("datetime").date(2026, 9, 2),
+        date(2026, 9, 1),
+        date(2026, 9, 2),
     }
     assert all(c.supply_aud == Decimal("1.80") for c in charged)
 
