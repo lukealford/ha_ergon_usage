@@ -367,7 +367,9 @@ class TestFetchRolling:
             await make_client(scenario).fetch_rolling()
         finally:
             FakeContext.new_page = original_new_page  # type: ignore[method-assign]
-        assert len(pages) == 2  # one login page + one usage page
+        # Only ONE page is created: the login tab is reused for the usage
+        # fetch (the WAF-protected SPA renders a second tab without data).
+        assert len(pages) == 1
         login_page = pages[0]
         selectors = [selector for selector, _value in login_page.filled]
         values = [value for _selector, value in login_page.filled]

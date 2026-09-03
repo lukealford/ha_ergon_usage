@@ -197,7 +197,9 @@ class ErgonClient:
             await _capture_response_into(response, candidates)
 
         async with self._run() as portal:
-            page = await portal.context.new_page()
+            # Reuse the login tab (WAF trust is page-scoped in practice); a
+            # second tab was observed to render without data.
+            page = portal.page
             try:
                 page.on("response", _capture)
                 await page.goto(self._usage_url(portal.account_id, day))
@@ -251,11 +253,17 @@ class ErgonClient:
 
 
 class _Portal:
-    """Result of a successful login plus account discovery."""
+    """Result of a successful login plus account discovery.
 
-    def __init__(self, context, account_id: str) -> None:
+    ``page`` is the SAME tab the login happened in.  The live portal is a
+    WAF-protected SPA; opening a second tab for the usage fetch gets a fresh
+    (often blocked) render, so callers must reuse this page.
+    """
+
+    def __init__(self, context, account_id: str, page) -> None:
         self.context = context
         self.account_id = account_id
+        self.page = page
 
 
 class _AuthenticatedRun:
@@ -285,9 +293,12 @@ class _AuthenticatedRun:
             try:
                 await self._login(page)
                 account_id = await self._discover_account(page)
-            finally:
+            except Exception:
                 await page.close()
-            return _Portal(self._context, account_id)
+                raise
+            # The login page stays OPEN; the usage fetch navigates this same
+            # tab (matching the proven manual-probe flow).
+            return _Portal(self._context, account_id, page)
         except Exception:
             await self._cleanup()
             raise
