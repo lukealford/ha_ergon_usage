@@ -200,6 +200,9 @@ class Coordinator:
         return processed, failed
 
     async def _process_backfill_day(self, day: date, errors: list[str]) -> bool:
+        # Rates and the rolling window already loaded pages; every Ergon page
+        # load is preceded by the configured inter-request delay.
+        await self._inter_request_delay()
         result = await self._fetch_day(day, errors)
         if result is None:
             return False

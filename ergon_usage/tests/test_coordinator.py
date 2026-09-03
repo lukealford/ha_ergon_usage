@@ -293,6 +293,14 @@ async def test_supply_allocated_once_per_date_from_next_midnight(ledger, ergon, 
 
 
 @pytest.mark.asyncio
+async def test_delay_applied_before_each_backfill_day_fetch(ledger, ergon, ha):
+    coordinator, delays = make_recording_coordinator(FakeSettings(), ledger, ergon, ha)
+    await coordinator.run_once("startup")
+    # One delay before rolling + one before each of the 3 backfill day fetches.
+    assert delays.count(1.0) == 4
+
+
+@pytest.mark.asyncio
 async def test_transient_retry_backs_off_then_completes(ledger, ergon, ha):
     settings = FakeSettings(retry_limit=2)
     coordinator, delays = make_recording_coordinator(settings, ledger, ergon, ha)
