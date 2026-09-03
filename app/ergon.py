@@ -481,15 +481,20 @@ def _resolve_readings(
         try:
             readings = extract_chart_payloads(chart_rows, account_id, day)
             source = "chart"
-        except ExtractionError:
+        except ExtractionError as error:
+            if chart_rows:
+                # The chart was read (rows exist) but its data did not match
+                # the request.  DOM cannot do better on a chart page; raise
+                # the chart error so its span diagnostic is visible.
+                raise ExtractionError(
+                    f"{error.safe_message} (chart shapes on page: {chart_shape_count})"
+                ) from None
             try:
                 readings = extract_dom(html, account_id, day)
                 source = "dom"
-            except ExtractionError as error:
-                # All three paths failed: make the failure self-describing
-                # with the on-page chart state from the chart attempt.
+            except ExtractionError as dom_error:
                 raise ExtractionError(
-                    f"{error.safe_message} (chart shapes on page: {chart_shape_count})"
+                    f"{dom_error.safe_message} (chart shapes on page: {chart_shape_count})"
                 ) from None
     return FetchResult(account_id=account_id, readings=tuple(readings), source=source)
 
