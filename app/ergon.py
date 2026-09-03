@@ -31,6 +31,10 @@ TARIFF_URL_TEMPLATE = PORTAL_BASE + "/{account}/tariff-metering"
 # Bounded wait (ms) for the portal to load after submitting credentials.
 LOGIN_WAIT_MS = 15_000
 
+# Generous wait (ms) for a human to solve the AWS WAF challenge in headful
+# mode before the login form appears.
+CHALLENGE_WAIT_MS = 300_000
+
 # Bot protection rejects Playwright's default "HeadlessChrome" UA.  This UA
 # matches the Chromium version Playwright ships with, minus the headless tag.
 REALISTIC_USER_AGENT = (
@@ -233,8 +237,11 @@ class _AuthenticatedRun:
         # the auth sign-in page (confirmed live: /portal ->
         # /auth/signin?callbackUrl=/portal).
         await page.goto(PORTAL_BASE, wait_until="domcontentloaded")
+        # A WAF challenge page shows no inputs until solved; in headful mode
+        # the operator solves it manually, so allow generous time.  The
+        # challenge auto-advances to the sign-in form once passed.
         try:
-            await page.wait_for_selector("input", timeout=LOGIN_WAIT_MS)
+            await page.wait_for_selector("input", timeout=LOGIN_WAIT_MS if not self._headful else CHALLENGE_WAIT_MS)
         except Exception:  # noqa: BLE001 - challenge or blocked page
             raise AuthenticationError() from None
         email_selector = await _first_visible(page, EMAIL_SELECTORS)
