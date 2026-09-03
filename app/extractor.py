@@ -317,22 +317,30 @@ def extract_chart_payloads(
                 )
             )
     if requested_day is not None and not readings:
-        # Every row was filtered out by the day boundary: surface the row
-        # range so the mismatch is diagnosable from the error alone.
+        # Every row was filtered out by the day boundary (or unparseable):
+        # surface the row range so the mismatch is diagnosable from the
+        # error alone.
         parsed_days = []
+        raw_days: list[str] = []
         for row in rows:
-            if isinstance(row, Mapping) and row.get("day"):
-                try:
-                    parsed_days.append(_parse_chart_day(row.get("day")))
-                except ExtractionError:
-                    continue
+            if not isinstance(row, Mapping) or not row.get("day"):
+                continue
+            raw = row["day"]
+            raw_days.append(str(raw)[:40])
+            try:
+                parsed_days.append(_parse_chart_day(raw))
+            except ExtractionError:
+                continue
         if parsed_days:
             span = (
                 f"{min(parsed_days).isoformat()} .. {max(parsed_days).isoformat()}"
                 f" UTC ({len(parsed_days)} rows)"
             )
-            raise ExtractionError(
-                "No usage readings found for the requested Brisbane day. "
-                f"Chart rows span: {span}; requested Brisbane day: {requested_day}."
-            )
+        else:
+            sample = sorted(set(raw_days))[:3]
+            span = f"{len(rows)} rows with unparseable 'day' values, e.g. {sample}"
+        raise ExtractionError(
+            "No usage readings found for the requested Brisbane day. "
+            f"Chart rows span: {span}; requested Brisbane day: {requested_day}."
+        )
     return _require_readings(readings)
