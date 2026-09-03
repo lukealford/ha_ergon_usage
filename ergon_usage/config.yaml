@@ -1,0 +1,30 @@
+name: Ergon Usage
+version: "0.1.0"
+slug: ergon_usage
+description: Securely collect and view Ergon electricity usage.
+url: https://github.com/lukealford/ergon_usage
+arch:
+  - amd64
+  - aarch64
+startup: application
+boot: auto
+init: false
+ingress: true
+ingress_port: 8099
+homeassistant_api: true
+options:
+  poll_interval_hours: 12
+  initial_history_days: 365
+  backfill_batch_days: 30
+  request_delay_seconds: 3
+  retry_limit: 5
+  tariff_name_overrides: {}
+schema:
+  ergon_email: email
+  ergon_password: password
+  poll_interval_hours: int(6,48)
+  initial_history_days: int(1,730)
+  backfill_batch_days: int(1,60)
+  request_delay_seconds: int(0,60)
+  retry_limit: int(0,10)
+  tariff_name_overrides: dict

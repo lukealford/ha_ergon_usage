@@ -1,0 +1,92 @@
+"""Configuration loading and validation for the Ergon Usage add-on."""
+
+from dataclasses import dataclass
+import json
+from pathlib import Path
+from types import MappingProxyType
+from typing import Mapping
+
+
+_RANGES = {
+    "poll_interval_hours": (6, 48),
+    "initial_history_days": (1, 730),
+    "backfill_batch_days": (1, 60),
+    "request_delay_seconds": (0, 60),
+    "retry_limit": (0, 10),
+}
+
+_DEFAULTS = {
+    "poll_interval_hours": 12,
+    "initial_history_days": 365,
+    "backfill_batch_days": 30,
+    "request_delay_seconds": 3,
+    "retry_limit": 5,
+    "tariff_name_overrides": {},
+}
+
+
+@dataclass(frozen=True)
+class Settings:
+    ergon_email: str
+    ergon_password: str
+    supervisor_token: str
+    poll_interval_hours: int
+    initial_history_days: int
+    backfill_batch_days: int
+    request_delay_seconds: int
+    retry_limit: int
+    tariff_name_overrides: Mapping[str, str]
+    data_dir: Path
+
+    @classmethod
+    def from_file(cls, path: Path, environ: Mapping[str, str]) -> "Settings":
+        try:
+            options = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise ValueError("Unable to read add-on options JSON.") from error
+
+        if not isinstance(options, dict):
+            raise ValueError("Add-on options JSON must be an object.")
+
+        email = _required_string(options, "ergon_email")
+        password = _required_string(options, "ergon_password")
+        supervisor_token = _required_environment_string(environ, "SUPERVISOR_TOKEN")
+
+        values = {**_DEFAULTS, **options}
+        for option, (lower, upper) in _RANGES.items():
+            value = values[option]
+            if isinstance(value, bool) or not isinstance(value, int) or not lower <= value <= upper:
+                raise ValueError(f"{option} must be an integer between {lower} and {upper}.")
+
+        overrides = values["tariff_name_overrides"]
+        if not isinstance(overrides, dict):
+            raise ValueError("tariff_name_overrides must be an object.")
+        if not all(isinstance(key, str) and isinstance(value, str) for key, value in overrides.items()):
+            raise ValueError("tariff_name_overrides must contain string keys and values.")
+
+        return cls(
+            ergon_email=email,
+            ergon_password=password,
+            supervisor_token=supervisor_token,
+            poll_interval_hours=values["poll_interval_hours"],
+            initial_history_days=values["initial_history_days"],
+            backfill_batch_days=values["backfill_batch_days"],
+            request_delay_seconds=values["request_delay_seconds"],
+            retry_limit=values["retry_limit"],
+            tariff_name_overrides=MappingProxyType(dict(overrides)),
+            data_dir=Path(environ.get("ERGON_DATA_DIR", "/data")),
+        )
+
+
+def _required_string(options: Mapping[str, object], name: str) -> str:
+    value = options.get(name)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{name} is required.")
+    return value
+
+
+def _required_environment_string(environ: Mapping[str, str], name: str) -> str:
+    value = environ.get(name)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{name} is required.")
+    return value
