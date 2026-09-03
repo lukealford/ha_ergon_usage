@@ -225,8 +225,21 @@ class ErgonClient:
                 html = await page.content()
                 # The live portal renders usage as a Recharts chart; hourly
                 # rows live in the React props of each bar shape.  Read them
-                # while the page is open (returns [] on any failure).
+                # while the page is open (returns [] on any failure).  Also
+                # capture a shape count for diagnostics when nothing is read.
                 chart_rows = await _read_chart_payloads(page)
+                if not chart_rows:
+                    try:
+                        shape_count = await page.evaluate(
+                            "document.querySelectorAll('.recharts-bar-rectangle path,"
+                            " .recharts-bar-rectangle rect').length"
+                        )
+                        logger.info(
+                            "Chart payload read empty; shape count on page: %s",
+                            shape_count,
+                        )
+                    except Exception:  # noqa: BLE001
+                        logger.info("Chart payload read empty; page has no chart.")
             finally:
                 await page.close()
         return _resolve_readings(portal.account_id, candidates, html, chart_rows, day)
@@ -384,15 +397,24 @@ async def _capture_response_into(response, candidates: list[CapturedJson]) -> No
 
 
 async def _read_chart_payloads(page) -> list[dict]:
-    """Best-effort read of Recharts bar payload rows via React fibers."""
+    """Best-effort read of Recharts bar payload rows via React fibers.
 
-    try:
-        rows = await page.evaluate(_RECHARTS_PAYLOAD_JS)
-    except Exception:  # noqa: BLE001 - portal markup may differ
-        return []
-    if not isinstance(rows, list):
-        return []
-    return [row for row in rows if isinstance(row, dict)]
+    Retries briefly: the chart can render its shapes a moment before React
+    attaches payload props.  Returns [] only when no rows appear within the
+    bounded window.
+    """
+
+    attempts = 10
+    for attempt in range(attempts):
+        try:
+            rows = await page.evaluate(_RECHARTS_PAYLOAD_JS)
+        except Exception:  # noqa: BLE001 - portal markup may differ
+            return []
+        if isinstance(rows, list) and rows:
+            return [row for row in rows if isinstance(row, dict)]
+        if attempt < attempts - 1:
+            await page.wait_for_timeout(1_000)
+    return []
 
 
 def _resolve_readings(
