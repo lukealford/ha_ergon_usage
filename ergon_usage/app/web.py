@@ -78,7 +78,10 @@ def build_status_payload(snapshot: Any) -> dict[str, Any]:
         "rates": rates,
         "rate_periods": rate_periods,
         "costs": costs,
-        "backfill": {"completed_days": snapshot.backfill_completed},
+        "backfill": {
+            "completed_days": snapshot.backfill_completed,
+            "total_days": snapshot.backfill_total,
+        },
         "imports": {
             statistic_id: _iso(through) for statistic_id, through in snapshot.imports.items()
         },
@@ -87,34 +90,27 @@ def build_status_payload(snapshot: Any) -> dict[str, Any]:
     }
 
 
-def _render_rates(payload: dict[str, Any]) -> str:
-    rows = []
-    for tariff, rate in payload["rates"].items():
-        rows.append(
-            "<tr><th scope=\"row\">{t}</th>"
-            "<td>{per} AUD/kWh</td><td>{sup} AUD/day</td>"
-            "<td>{ue}</td><td>{se}</td></tr>".format(
-                t=html.escape(str(tariff)),
-                per=html.escape(str(rate["per_kwh_aud"])),
-                sup=html.escape(str(rate["daily_supply_aud"])),
-                ue=html.escape(str(rate["usage_effective_at"])),
-                se=html.escape(str(rate["supply_effective_at"])),
-            )
+def _rate_row(tariff: str, rate: dict[str, Any]) -> str:
+    return (
+        "<tr><th scope=\"row\">{t}</th>"
+        "<td>{per} AUD/kWh</td><td>{sup} AUD/day</td>"
+        "<td>{ue}</td><td>{se}</td></tr>".format(
+            t=html.escape(str(tariff)),
+            per=html.escape(str(rate["per_kwh_aud"])),
+            sup=html.escape(str(rate["daily_supply_aud"])),
+            ue=html.escape(str(rate["usage_effective_at"])),
+            se=html.escape(str(rate["supply_effective_at"])),
         )
-    prior = []
-    for tariff, periods in payload["rate_periods"].items():
-        for period in periods:
-            prior.append(
-                "<tr><th scope=\"row\">{t}</th>"
-                "<td>{per} AUD/kWh</td><td>{sup} AUD/day</td>"
-                "<td>{ue}</td><td>{se}</td></tr>".format(
-                    t=html.escape(str(tariff)),
-                    per=html.escape(str(period["per_kwh_aud"])),
-                    sup=html.escape(str(period["daily_supply_aud"])),
-                    ue=html.escape(str(period["usage_effective_at"])),
-                    se=html.escape(str(period["supply_effective_at"])),
-                )
-            )
+    )
+
+
+def _render_rates(payload: dict[str, Any]) -> str:
+    rows = [_rate_row(tariff, rate) for tariff, rate in payload["rates"].items()]
+    prior = [
+        _rate_row(tariff, period)
+        for tariff, periods in payload["rate_periods"].items()
+        for period in periods
+    ]
     return (
         "<h2>Current rates</h2><table><caption>Per-tariff rates and effective "
         "boundaries</caption><thead><tr><th>Tariff</th><th>Usage</th><th>Supply</th>"
@@ -183,14 +179,8 @@ def render_index(payload: dict[str, Any]) -> str:
     )
 
 
-def create_app(coordinator: Any, *, settings: Any | None = None) -> web.Application:
-    """Build the aiohttp application for ingress access.
-
-    ``settings`` is accepted only so tests can prove credentials are never
-    serialized; the application never reads it.
-    """
-
-    del settings
+def create_app(coordinator: Any) -> web.Application:
+    """Build the aiohttp application for ingress access."""
 
     app = web.Application()
     app[web.AppKey("coordinator", object)] = coordinator
@@ -204,10 +194,10 @@ def create_app(coordinator: Any, *, settings: Any | None = None) -> web.Applicat
         return _no_store(web.json_response(build_status_payload(snapshot)))
 
     async def run_now(request: web.Request) -> web.Response:
-        accepted = coordinator.request_run("manual")
-        if not accepted:
-            asyncio.get_running_loop().create_task(coordinator.run_once("manual"))
-        return _no_store(web.json_response({"coalesced": not accepted}, status=202))
+        accepted, coalesced = coordinator.run_now("manual")
+        return _no_store(
+            web.json_response({"accepted": accepted, "coalesced": coalesced}, status=202)
+        )
 
     async def index(request: web.Request) -> web.Response:
         payload = build_status_payload(coordinator.snapshot())

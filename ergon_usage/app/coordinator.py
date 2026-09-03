@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 import logging
 import random
 from typing import Awaitable, Callable, Literal
@@ -48,6 +49,41 @@ class RunSummary:
     gaps: tuple[str, ...] = field(default_factory=tuple)
 
 
+@dataclass(frozen=True)
+class RateView:
+    """One rate as stored in the ledger, ready for serialization."""
+
+    per_kwh_aud: Decimal
+    daily_supply_aud: Decimal | None
+    observed_at: datetime
+    usage_effective_at: datetime
+    supply_effective_at: datetime
+
+
+@dataclass(frozen=True)
+class CostView:
+    """Accumulated cost components for one tariff."""
+
+    usage_aud: Decimal
+    supply_aud: Decimal
+
+
+@dataclass(frozen=True)
+class CoordinatorStatus:
+    """Sanitized status view built from real ledger and run state."""
+
+    phase: Literal["idle", "running", "error"]
+    rates: dict[str, RateView]
+    rate_periods: dict[str, list[RateView]]
+    costs: dict[str, CostView]
+    backfill_completed: int
+    backfill_total: int
+    imports: dict[str, datetime]
+    last_run: RunSummary | None
+    error: str | None
+    gaps: tuple[str, ...]
+
+
 class Coordinator:
     """Owns the run cycle: rates, rolling usage, bounded backfill, imports."""
 
@@ -73,13 +109,85 @@ class Coordinator:
         self._pending = asyncio.Event()
         self._account_id: str | None = None
         self._tariffs: tuple[str, ...] = ()
+        self._last_run: RunSummary | None = None
+        self._last_error: str | None = None
+        self._run_task: asyncio.Task[RunSummary] | None = None
 
     # -- public API -------------------------------------------------------
 
-    def snapshot(self):
-        """Return the sanitized ledger status (no credentials)."""
+    def snapshot(self) -> CoordinatorStatus:
+        """Return the sanitized status view (no credentials)."""
 
-        return self._ledger.status()
+        status = self._ledger.status()
+        phase: Literal["idle", "running", "error"] = (
+            "error" if self._last_error else "idle"
+        )
+        if self._run_lock.locked() or (
+            self._run_task is not None and not self._run_task.done()
+        ):
+            phase = "running"
+        rates: dict[str, RateView] = {}
+        rate_periods: dict[str, list[RateView]] = {}
+        costs: dict[str, CostView] = {}
+        if self._account_id is not None:
+            for tariff in self._tariffs:
+                periods = self._ledger.rate_periods(self._account_id, tariff)
+                if not periods:
+                    continue
+                current = periods[-1]
+                rates[tariff] = RateView(
+                    per_kwh_aud=current.per_kwh_aud,
+                    daily_supply_aud=current.daily_supply_aud,
+                    observed_at=self._last_observed(self._account_id, tariff),
+                    usage_effective_at=current.usage_effective_at,
+                    supply_effective_at=current.supply_effective_at,
+                )
+                rate_periods[tariff] = [
+                    RateView(
+                        per_kwh_aud=period.per_kwh_aud,
+                        daily_supply_aud=period.daily_supply_aud,
+                        observed_at=period.usage_effective_at,
+                        usage_effective_at=period.usage_effective_at,
+                        supply_effective_at=period.supply_effective_at,
+                    )
+                    for period in periods[:-1]
+                ]
+                components = self._ledger.cost_components_from(
+                    self._account_id, tariff, None
+                )
+                costs[tariff] = CostView(
+                    usage_aud=sum(
+                        (component.usage_aud for component in components),
+                        Decimal("0"),
+                    ),
+                    supply_aud=sum(
+                        (component.supply_aud for component in components),
+                        Decimal("0"),
+                    ),
+                )
+        return CoordinatorStatus(
+            phase=phase,
+            rates=rates,
+            rate_periods=rate_periods,
+            costs=costs,
+            backfill_completed=status.completed_backfill_days,
+            backfill_total=status.completed_backfill_days + len(self._pending_backfill()),
+            imports=dict(status.imports),
+            last_run=self._last_run,
+            error=self._last_error,
+            gaps=self._last_run.gaps if self._last_run else (),
+        )
+
+    def _last_observed(self, account_id: str, tariff: str) -> datetime:
+        periods = self._ledger.rate_periods(account_id, tariff)
+        return max(period.usage_effective_at for period in periods)
+
+    def _pending_backfill(self) -> list:
+        if self._account_id is None:
+            return []
+        today = self._today_brisbane()
+        start = today - timedelta(days=self._settings.initial_history_days)
+        return self._ledger.pending_backfill(start, today)
 
     def request_run(self, reason: str) -> bool:
         """Request a run; return False when a run is active (coalesced)."""
@@ -89,11 +197,33 @@ class Coordinator:
             return False
         return True
 
+    def run_now(self, reason: Reason) -> tuple[bool, bool]:
+        """Trigger a manual run from the web layer.
+
+        Returns ``(accepted, coalesced)``.  When idle, schedules the run as a
+        task and returns ``(True, False)``; when a run is active, records the
+        pending request and returns ``(True, True)`` so nothing is lost.
+        """
+
+        if self._run_lock.locked():
+            self._pending.set()
+            return (True, True)
+        self._run_task = asyncio.get_running_loop().create_task(
+            self.run_once(reason)
+        )
+        return (True, False)
+
     async def run_once(self, reason: Reason) -> RunSummary:
         """Perform one full synchronization cycle, serialized."""
 
         async with self._run_lock:
-            return await self._run(reason)
+            summary = await self._run(reason)
+            self._last_run = summary
+            if summary.errors:
+                self._last_error = summary.errors[-1]
+            else:
+                self._last_error = None
+            return summary
 
     async def serve(self, stop: asyncio.Event) -> None:
         """Jittered startup run, then poll until stopped, honoring coalescing."""

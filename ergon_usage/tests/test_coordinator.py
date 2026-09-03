@@ -398,6 +398,6 @@ async def test_checkpoint_only_after_ha_acknowledgement(ledger, ergon, ha):
     summary = await coordinator.run_once("startup")
     assert summary.errors
     assert summary.backfill_days_failed == 1
-    assert coordinator.snapshot().completed_backfill_days == 0
+    assert coordinator.snapshot().backfill_completed == 0
     failing_day = ergon.today - timedelta(days=3)
     assert failing_day in ledger.pending_backfill(backfill_start(ergon, 3), ergon.today)

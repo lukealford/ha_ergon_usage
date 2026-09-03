@@ -1,5 +1,6 @@
 """Ingress status UI and manual sync endpoint tests."""
 
+import asyncio
 import json
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -8,7 +9,14 @@ import pytest
 import pytest_asyncio
 from aiohttp.test_utils import TestClient, TestServer
 
+from ergon_usage.app.coordinator import Coordinator
+from ergon_usage.app.ledger import Ledger
 from ergon_usage.app.web import create_app  # noqa: E402
+from ergon_usage.tests.test_coordinator import (  # noqa: E402
+    FakeErgon,
+    FakeHA,
+    FakeSettings,
+)
 
 FAKE_SECRET = "s3cret-ergon-password"
 
@@ -77,33 +85,35 @@ class FakeSnapshot:
             "Tariff 11": FakeCostView(Decimal("12.34567"), Decimal("9.87654"))
         }
         self.backfill_completed = 5
+        self.backfill_total = 10
         self.imports = {}
         self.last_run = FakeRunSummary()
         self.error = None
 
 
 class FakeCoordinator:
-    """Records request_run calls and returns a controlled snapshot."""
+    """Records run_now calls and returns a controlled snapshot."""
 
     def __init__(self):
         self.snapshot_value = FakeSnapshot()
         self.requests: list[str] = []
         self.runs: list[str] = []
-        self._calls = 0
+        self.busy = False
 
     def snapshot(self):
         return self.snapshot_value
 
-    def request_run(self, reason: str) -> bool:
+    def run_now(self, reason: str) -> tuple[bool, bool]:
         self.requests.append(reason)
-        self._calls += 1
-        if self._calls == 1:
-            self.runs.append(reason)
-            return True
-        return False
+        if self.busy:
+            return (True, True)
+        self.busy = True
+        asyncio.get_running_loop().create_task(self.run_once(reason))
+        return (True, False)
 
     async def run_once(self, reason):
         self.runs.append(reason)
+        self.busy = False
 
 
 @pytest.fixture
@@ -111,20 +121,9 @@ def coordinator():
     return FakeCoordinator()
 
 
-def fake_settings_like():
-    """Object shaped like Settings to prove web never serializes it."""
-
-    class S:
-        ergon_email = "user@example.com"
-        ergon_password = FAKE_SECRET
-        supervisor_token = "super-token"
-
-    return S()
-
-
 @pytest.mark.asyncio
 async def test_status_is_sanitized(aiohttp_client_factory, coordinator):
-    client = await aiohttp_client_factory(create_app(coordinator, settings=fake_settings_like()))
+    client = await aiohttp_client_factory(create_app(coordinator))
     response = await client.get("/api/status")
     assert response.status == 200
     body = await response.json()
@@ -142,11 +141,72 @@ async def test_run_now_accepts_and_coalesces(aiohttp_client_factory, coordinator
     client = await aiohttp_client_factory(create_app(coordinator))
     first = await client.post("/api/run")
     assert first.status == 202
+    assert (await first.json())["coalesced"] is False
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert coordinator.runs == ["manual"]
+    coordinator.busy = True  # simulate a run in flight
     second = await client.post("/api/run")
     assert second.status == 202
     assert (await second.json())["coalesced"] is True
-    assert (await first.json())["coalesced"] is False
     assert coordinator.requests == ["manual", "manual"]
+    coordinator.busy = False
+
+
+@pytest.mark.asyncio
+async def test_run_now_executes_real_coordinator_run(
+    tmp_path, aiohttp_client_factory
+):
+    """A manual POST drives the real coordinator end to end, and a run in
+    flight coalesces a second request."""
+
+    ledger = Ledger.open(tmp_path / "ledger.db")
+    try:
+        ergon = FakeErgon()
+        ha = FakeHA()
+        coordinator = Coordinator(
+            FakeSettings(request_delay_seconds=0),
+            ergon,
+            ledger,
+            ha,
+            random_func=lambda: 0.5,
+        )
+        client = await aiohttp_client_factory(create_app(coordinator))
+
+        response = await client.post("/api/run")
+        assert response.status == 202
+        assert (await response.json())["coalesced"] is False
+
+        assert coordinator._run_task is not None
+        await coordinator._run_task
+
+        # The fake Ergon client actually served a full run.
+        assert ergon.calls[:2] == ["rates", "rolling"]
+
+        body = await (await client.get("/api/status")).json()
+        assert body["phase"] == "idle"
+        assert body["last_run"]["reason"] == "manual"
+        assert body["rates"]["Tariff 11"]["per_kwh_aud"] == "0.30"
+        assert body["rates"]["Tariff 11"]["daily_supply_aud"] == "1.00"
+        assert body["rate_periods"]["Tariff 11"] == []
+        # Only intervals from the rate's effective boundary onward are priced:
+        # 14h on the observed day + 24h yesterday + 24h today = 38 intervals
+        # x 0.1 kWh x 0.30 AUD/kWh.
+        assert Decimal(body["costs"]["Tariff 11"]["usage_aud"]) == Decimal("1.140")
+        # Two supply days (from the supply boundary the next midnight).
+        assert Decimal(body["costs"]["Tariff 11"]["supply_aud"]) == Decimal("2.00")
+        assert body["backfill"]["completed_days"] == 3
+        assert body["backfill"]["total_days"] == 3
+        assert body["last_run"]["readings_new"] == 72
+        assert body["error"] is None
+
+        # A second request while a run holds the lock is coalesced, not lost.
+        async with coordinator._run_lock:
+            concurrent = await client.post("/api/run")
+        assert concurrent.status == 202
+        assert (await concurrent.json())["coalesced"] is True
+    finally:
+        ledger.close()
 
 
 @pytest.mark.asyncio
@@ -184,6 +244,10 @@ async def test_index_html_renders_status(aiohttp_client_factory, coordinator):
 @pytest.mark.asyncio
 async def test_cache_control_no_store(aiohttp_client_factory, coordinator):
     client = await aiohttp_client_factory(create_app(coordinator))
-    for path in ("/", "/api/status"):
+    for path in ("/", "/api/status", "/health"):
         response = await client.get(path)
         assert response.headers["Cache-Control"] == "no-store"
+    response = await client.post("/api/run")
+    assert response.headers["Cache-Control"] == "no-store"
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
