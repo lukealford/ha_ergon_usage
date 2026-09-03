@@ -334,7 +334,8 @@ class TestFetchRolling:
                 return 2  # shape count
             return [
                 {"series": "Tariff 11", "payload": {"date": "31 Aug 12:00AM", "day": "2026-08-30 14:00:00+00:00", "RTC11": 1.25}},
-                {"series": "Tariff 11", "payload": {"date": "31 Aug 01:00AM", "day": "2026-08-30 15:00:00+00:00", "RTC11": 0.5, "RTC33": 0.75}},
+                {"series": "Tariff 11", "payload": {"date": "31 Aug 01:00AM", "day": "2026-08-30 15:00:00+00:00", "RTC11": 0.5}},
+                {"series": "Tariff 33", "payload": {"date": "31 Aug 01:00AM", "day": "2026-08-30 15:00:00+00:00", "RTC33": 0.75}},
             ]
 
         monkeypatch.setattr(FakePage, "evaluate", evaluate)
@@ -342,9 +343,9 @@ class TestFetchRolling:
         assert result.source == "chart"
         assert len(result.readings) == 3
         assert {(r.tariff, r.kwh) for r in result.readings} == {
-            ("RTC11", Decimal("1.25")),
-            ("RTC11", Decimal("0.5")),
-            ("RTC33", Decimal("0.75")),
+            ("Tariff 11", Decimal("1.25")),
+            ("Tariff 11", Decimal("0.5")),
+            ("Tariff 33", Decimal("0.75")),
         }
 
     @pytest.mark.asyncio

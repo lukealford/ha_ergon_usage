@@ -17,6 +17,7 @@ one candidate extracts successfully.
 
 import math
 import re
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
@@ -247,13 +248,50 @@ def _parse_chart_day(value: object) -> datetime:
     )
 
 
-def extract_chart_payloads(
-    rows: Sequence[Mapping], account_id: str, requested_day: date | None
-) -> list[UsageReading]:
-    """Extract readings from Recharts bar-shape ``payload`` objects.
+def _build_tariff_names(wrapped_rows: Sequence[object]) -> dict[str, str]:
+    """Majority-vote RTC codes to display tariff names from chart shapes.
 
-    The live portal renders usage as a Recharts chart; each bar shape carries
-    a React ``payload`` dict holding one row per hour, e.g.::
+    Each wrapped row is ``{"series": <display name>, "payload": {row}}``.
+    A shape of series "Tariff 33" renders only RTC33 bars, so any nonzero
+    ``RTC*`` value in its payload maps that RTC code to the series name.
+    Codes with no observations (or tied votes) keep the RTC code as name.
+    """
+
+    votes: dict[str, Counter[str]] = defaultdict(Counter)
+    for wrapped in wrapped_rows:
+        if not isinstance(wrapped, Mapping):
+            continue
+        series = wrapped.get("series")
+        if not isinstance(series, str) or not series.strip():
+            continue
+        payload = wrapped.get("payload")
+        if not isinstance(payload, Mapping):
+            continue
+        for key, value in payload.items():
+            if not isinstance(key, str) or not _TARIFF_KEY_RE.match(key):
+                continue
+            if (
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and value != 0
+            ):
+                votes[key][series.strip()] += 1
+    names: dict[str, str] = {}
+    for code, counts in votes.items():
+        top_count = max(counts.values())
+        winners = [n for n, c in counts.items() if c == top_count]
+        names[code] = winners[0] if len(winners) == 1 else code
+    return names
+
+
+def extract_chart_payloads(
+    rows: Sequence[object], account_id: str, requested_day: date | None
+) -> list[UsageReading]:
+    """Extract readings from wrapped Recharts bar-shape rows.
+
+    Each row is ``{"series": <display name|None>, "payload": {hour row}}``
+    as produced by the Recharts fiber walk in ``app.ergon``.  The payload
+    holds one row per hour, e.g.::
 
         {"date": "01 Sep 12:00AM", "day": "2026-08-31 14:00:00+00:00",
          "RTC11": 1.094, "RTC33": 0.435}
@@ -265,34 +303,41 @@ def extract_chart_payloads(
     - The same row is observed once per rendered series shape, so rows are
       deduplicated by (tariff, interval_start).
 
-    Tariff names use the raw RTC code (e.g. ``"RTC11"``) rather than the
-    chart's display name (``"Tariff 11"``): the ``series`` display name lives
-    on the per-shape element, not the shared row, so it cannot be joined
-    reliably to a row-level tariff key.
+    Tariff codes are mapped to the chart's display names (``RTC11`` →
+    ``"Tariff 11"``) by majority vote across the observed (series, code)
+    pairs; rows whose ``series`` is None contribute no votes.  Codes without
+    a consistent display name fall back to the RTC code itself, so readings
+    always carry a tariff name.  Display names are what the rates page uses,
+    allowing usage and rates to join in the coordinator.
     """
 
     if not isinstance(rows, (list, tuple)) or not rows:
         raise ExtractionError("Chart payload must be a non-empty list of rows.")
 
+    tariff_names = _build_tariff_names(rows)
+
     readings: list[UsageReading] = []
     seen: set[tuple[str, object]] = set()
     malformed = 0
-    for row in rows:
+    for wrapped in rows:
+        payload: object = wrapped
+        if isinstance(wrapped, Mapping) and "payload" in wrapped:
+            payload = wrapped.get("payload")
         # The fiber walk can collect adjacent Recharts prop objects that are
         # not chart data rows; skip anything without a usable 'day' rather
         # than failing the whole extraction.
-        if not isinstance(row, Mapping) or not row.get("day"):
+        if not isinstance(payload, Mapping) or not payload.get("day"):
             malformed += 1
             continue
         try:
-            interval_start = _parse_chart_day(row.get("day"))
+            interval_start = _parse_chart_day(payload.get("day"))
         except ExtractionError:
             malformed += 1
             continue
         local_date = interval_start.astimezone(BRISBANE).date()
         if requested_day is not None and local_date != requested_day:
             continue
-        for key, raw_value in row.items():
+        for key, raw_value in payload.items():
             if key in ("date", "day") or not isinstance(key, str):
                 continue
             if not _TARIFF_KEY_RE.match(key):
@@ -317,7 +362,7 @@ def extract_chart_payloads(
             readings.append(
                 UsageReading(
                     account_id=account_id,
-                    tariff=key,
+                    tariff=tariff_names.get(key, key),
                     interval_start=interval_start,
                     kwh=Decimal(str(raw_value)),
                 )
@@ -328,10 +373,12 @@ def extract_chart_payloads(
         # error alone.
         parsed_days = []
         raw_days: list[str] = []
-        for row in rows:
-            if not isinstance(row, Mapping) or not row.get("day"):
+        for wrapped in rows:
+            if isinstance(wrapped, Mapping) and "payload" in wrapped:
+                wrapped = wrapped.get("payload")
+            if not isinstance(wrapped, Mapping) or not wrapped.get("day"):
                 continue
-            raw = row["day"]
+            raw = wrapped["day"]
             raw_days.append(str(raw)[:40])
             try:
                 parsed_days.append(_parse_chart_day(raw))

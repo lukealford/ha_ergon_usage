@@ -573,12 +573,15 @@ async def _capture_response_into(response, candidates: list[CapturedJson]) -> No
 
 
 async def _read_chart_payloads(page) -> list[dict]:
-    """Best-effort read of Recharts bar payload rows via React fibers.
+    """Best-effort read of wrapped Recharts bar-shape rows via React fibers.
 
     Uses the exact algorithm proven by the manual probe: walk each bar
-    shape's React fiber/props for a ``payload`` prop, wrapping it with the
-    shape's ``series`` display name.  Retries briefly; returns [] only when
-    no rows appear within the bounded window.
+    shape's React fiber/props for a ``payload`` prop, keeping the shape's
+    ``series`` display name alongside it.  Each returned item is
+    ``{"series": str | None, "payload": {hour row}}``; the series name is
+    what ``extract_chart_payloads`` uses to map RTC codes to display tariff
+    names.  Retries briefly; returns [] only when no rows appear within the
+    bounded window.
     """
 
     attempts = 10
@@ -594,7 +597,13 @@ async def _read_chart_payloads(page) -> list[dict]:
                     continue
                 payload = item.get("payload")
                 if isinstance(payload, dict):
-                    rows.append(payload)
+                    series = item.get("series")
+                    rows.append(
+                        {
+                            "series": series if isinstance(series, str) else None,
+                            "payload": payload,
+                        }
+                    )
             if rows:
                 return rows
         if attempt < attempts - 1:

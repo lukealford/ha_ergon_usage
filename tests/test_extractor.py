@@ -125,13 +125,27 @@ def test_captured_json_keeps_all_response_metadata(fixture_json):
 
 @pytest.fixture
 def chart_rows():
-    return json.loads((FIXTURES / "chart_payloads.json").read_text(encoding="utf-8"))
+    payloads = json.loads((FIXTURES / "chart_payloads.json").read_text(encoding="utf-8"))
+    # On the live portal each row is observed once per rendered series shape,
+    # and a shape renders only its own series' bars — so a "Tariff 11" shape's
+    # payload carries a nonzero RTC11 and no nonzero RTC33, and vice versa.
+    wrapped = []
+    for row in payloads:
+        for code, name in (("RTC11", "Tariff 11"), ("RTC33", "Tariff 33")):
+            if row.get(code):
+                sub = {k: v for k, v in row.items() if k in ("date", "day", code)}
+                wrapped.append({"series": name, "payload": sub})
+    return wrapped
 
 
-def make_chart_row(day: str, **tariffs: float | None) -> dict:
+def make_chart_row(day: str, series: str = "Tariff 11", **tariffs: float | None) -> dict:
     payload = {"date": "x", "day": day}
     payload.update(tariffs)
-    return payload
+    return {"series": series, "payload": payload}
+
+
+def wrap(series, payload):
+    return {"series": series, "payload": payload}
 
 
 def full_day_rows(**fixed_tariffs) -> list[dict]:
@@ -148,18 +162,21 @@ def full_day_rows(**fixed_tariffs) -> list[dict]:
 def test_chart_payloads_extract_both_tariffs_from_shared_rows(chart_rows):
     rows = extract_chart_payloads(chart_rows, ACCOUNT_ID, REQUESTED_DAY)
 
-    assert {row.tariff for row in rows} == {"RTC11", "RTC33"}
-    assert {row.tariff for row in rows}.isdisjoint({"date", "day"})
+    assert {row.tariff for row in rows} == {"Tariff 11", "Tariff 33"}
+    assert {row.tariff for row in rows}.isdisjoint({"date", "day", "RTC11", "RTC33"})
 
 
 def test_chart_payloads_extract_24_hours_per_tariff():
     rows = extract_chart_payloads(
-        full_day_rows(RTC11=1.0, RTC33=0.5), ACCOUNT_ID, REQUESTED_DAY
+        full_day_rows(RTC11=1.0)
+        + full_day_rows(RTC33=0.5, series="Tariff 33"),
+        ACCOUNT_ID,
+        REQUESTED_DAY,
     )
 
     assert len(rows) == 48
-    assert {row.tariff for row in rows} == {"RTC11", "RTC33"}
-    for tariff in ("RTC11", "RTC33"):
+    assert {row.tariff for row in rows} == {"Tariff 11", "Tariff 33"}
+    for tariff in ("Tariff 11", "Tariff 33"):
         starts = [r.interval_start for r in rows if r.tariff == tariff]
         assert len({s.hour for s in starts}) == 24
         assert all(s.astimezone(__import__("zoneinfo").ZoneInfo("Australia/Brisbane")).date() == REQUESTED_DAY for s in starts)
@@ -169,7 +186,7 @@ def test_chart_payloads_skip_zero_and_absent_keys(chart_rows):
     rows = extract_chart_payloads(chart_rows, ACCOUNT_ID, REQUESTED_DAY)
 
     # Row 1: both nonzero. Row 2: RTC33 absent. Row 3: RTC33 == 0.
-    rtc33 = [r for r in rows if r.tariff == "RTC33"]
+    rtc33 = [r for r in rows if r.tariff == "Tariff 33"]
     assert len(rtc33) == 1
     assert rtc33[0].kwh == Decimal("0.435")
     assert rtc33[0].interval_start == datetime(2026, 8, 30, 14, tzinfo=timezone.utc)
@@ -212,20 +229,26 @@ def test_chart_payloads_reject_negative_and_non_finite_values():
 
 def test_chart_payloads_ignore_none_values():
     rows = extract_chart_payloads(
-        [make_chart_row("2026-08-30 14:00:00+00:00", RTC11=None, RTC33=0.5)],
+        [wrap("Tariff 33", {"date": "x", "day": "2026-08-30 14:00:00+00:00", "RTC11": None, "RTC33": 0.5})],
         ACCOUNT_ID,
         REQUESTED_DAY,
     )
 
-    assert {row.tariff for row in rows} == {"RTC33"}
+    assert {row.tariff for row in rows} == {"Tariff 33"}
 
 
 def test_chart_payloads_deduplicate_duplicate_shapes():
-    row = make_chart_row("2026-08-30 14:00:00+00:00", RTC11=1.0, RTC33=0.5)
-    rows = extract_chart_payloads([row, dict(row), dict(row)], ACCOUNT_ID, REQUESTED_DAY)
+    row = make_chart_row("2026-08-30 14:00:00+00:00", RTC11=1.0)
+    row33 = make_chart_row("2026-08-30 14:00:00+00:00", series="Tariff 33", RTC33=0.5)
+    rows = extract_chart_payloads(
+        [row, dict(row), dict(row), row33, dict(row33)], ACCOUNT_ID, REQUESTED_DAY
+    )
 
     assert len(rows) == 2
-    assert {(r.tariff, r.kwh) for r in rows} == {("RTC11", Decimal("1.0")), ("RTC33", Decimal("0.5"))}
+    assert {(r.tariff, r.kwh) for r in rows} == {
+        ("Tariff 11", Decimal("1.0")),
+        ("Tariff 33", Decimal("0.5")),
+    }
 
 
 def test_chart_payloads_filter_by_requested_brisbane_day():
@@ -264,7 +287,7 @@ def test_chart_payloads_reject_malformed_rows():
         )
     with pytest.raises(ExtractionError):
         extract_chart_payloads(
-            [{"day": "2026-08-31 14:00:00+00:00", "RTC11": "abc"}],
+            [wrap(None, {"day": "2026-08-31 14:00:00+00:00", "RTC11": "abc"})],
             ACCOUNT_ID,
             REQUESTED_DAY,
         )
@@ -272,14 +295,61 @@ def test_chart_payloads_reject_malformed_rows():
 
 def test_chart_payloads_tariff_keys_are_dynamic_not_hardcoded():
     rows = extract_chart_payloads(
-        [make_chart_row("2026-08-30 14:00:00+00:00", RTC77=0.25)],
+        [wrap("Tariff 77", {"date": "x", "day": "2026-08-30 14:00:00+00:00", "RTC77": 0.25})],
         ACCOUNT_ID,
         REQUESTED_DAY,
     )
 
     assert len(rows) == 1
-    assert rows[0].tariff == "RTC77"
+    assert rows[0].tariff == "Tariff 77"
     assert rows[0].kwh == Decimal("0.25")
+
+
+def test_chart_payloads_series_none_falls_back_to_rtc_code():
+    rows = extract_chart_payloads(
+        [
+            wrap(None, {"date": "x", "day": "2026-08-30 14:00:00+00:00", "RTC11": 1.0}),
+            wrap(None, {"date": "x", "day": "2026-08-30 15:00:00+00:00", "RTC11": 2.0}),
+        ],
+        ACCOUNT_ID,
+        REQUESTED_DAY,
+    )
+
+    assert len(rows) == 2
+    assert {row.tariff for row in rows} == {"RTC11"}
+
+
+def test_chart_payloads_mapping_consistent_across_same_series_shapes():
+    # Two shapes of the same series both name RTC33; the mapping must agree
+    # and readings must consistently use the display name.
+    rows = extract_chart_payloads(
+        [
+            wrap("Tariff 33", {"date": "x", "day": "2026-08-30 14:00:00+00:00", "RTC33": 1.0}),
+            wrap("Tariff 33", {"date": "x", "day": "2026-08-30 15:00:00+00:00", "RTC33": 2.0}),
+            wrap("Tariff 11", {"date": "x", "day": "2026-08-30 14:00:00+00:00", "RTC11": 0.5}),
+        ],
+        ACCOUNT_ID,
+        REQUESTED_DAY,
+    )
+
+    assert {row.tariff for row in rows if row.kwh == Decimal("1.0")} == {"Tariff 33"}
+    assert {row.tariff for row in rows if row.kwh == Decimal("2.0")} == {"Tariff 33"}
+    assert {row.tariff for row in rows if row.kwh == Decimal("0.5")} == {"Tariff 11"}
+
+
+def test_chart_payloads_mixed_series_none_and_named_rows():
+    # Named shapes provide the mapping; None-series rows reuse it.
+    rows = extract_chart_payloads(
+        [
+            wrap("Tariff 11", {"date": "x", "day": "2026-08-30 14:00:00+00:00", "RTC11": 1.0}),
+            wrap(None, {"date": "x", "day": "2026-08-30 15:00:00+00:00", "RTC11": 2.0}),
+        ],
+        ACCOUNT_ID,
+        REQUESTED_DAY,
+    )
+
+    assert len(rows) == 2
+    assert {row.tariff for row in rows} == {"Tariff 11"}
 
 
 def test_selector_accepts_exactly_one_valid_json_response(fixture_json):
