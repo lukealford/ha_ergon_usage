@@ -471,11 +471,16 @@ class _AuthenticatedRun:
         # the auth sign-in page (confirmed live: /portal ->
         # /auth/signin?callbackUrl=/portal).
         await page.goto(PORTAL_BASE, wait_until="domcontentloaded")
-        # A WAF challenge page shows no inputs until solved; in headful mode
-        # the operator solves it manually, so allow generous time.  The
-        # challenge auto-advances to the sign-in form once passed.
+        # Wait for an actual LOGIN field, not any input: challenge pages
+        # render hidden inputs (e.g. WAF/turnstile response fields) that
+        # would satisfy a generic "input" selector.  In headful mode the
+        # operator may need to solve the challenge first, hence the long
+        # window; the challenge auto-advances to the sign-in form.
         try:
-            await page.wait_for_selector("input", timeout=LOGIN_WAIT_MS if not self._headful else CHALLENGE_WAIT_MS)
+            await page.wait_for_selector(
+                ", ".join(EMAIL_SELECTORS),
+                timeout=LOGIN_WAIT_MS if not self._headful else CHALLENGE_WAIT_MS,
+            )
         except Exception:  # noqa: BLE001 - challenge or blocked page
             raise AuthenticationError() from None
         email_selector = await _first_visible(page, EMAIL_SELECTORS)
