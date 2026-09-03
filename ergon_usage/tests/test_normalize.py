@@ -7,6 +7,8 @@ from ergon_usage.app.errors import AccountDiscoveryError
 from ergon_usage.app.models import StatisticPoint, TariffRate, UsageReading
 from ergon_usage.app.normalize import (
     discover_single_account,
+    effective_supply_boundary,
+    effective_usage_boundary,
     parse_brisbane_timestamp,
     statistic_id,
 )
@@ -15,6 +17,24 @@ from ergon_usage.app.normalize import (
 def test_timestamp_is_aware_utc():
     result = parse_brisbane_timestamp("31 Aug 2026 07:00PM")
     assert result.isoformat() == "2026-08-31T09:00:00+00:00"
+
+
+def test_effective_usage_boundary_is_the_current_or_next_brisbane_hour():
+    assert effective_usage_boundary(datetime(2026, 8, 31, 9, tzinfo=timezone.utc)) == datetime(
+        2026, 8, 31, 9, tzinfo=timezone.utc
+    )
+    assert effective_usage_boundary(datetime(2026, 8, 31, 9, 15, tzinfo=timezone.utc)) == datetime(
+        2026, 8, 31, 10, tzinfo=timezone.utc
+    )
+
+
+def test_effective_supply_boundary_is_the_next_brisbane_midnight():
+    assert effective_supply_boundary(datetime(2026, 8, 31, 9, tzinfo=timezone.utc)) == datetime(
+        2026, 8, 31, 14, tzinfo=timezone.utc
+    )
+    assert effective_supply_boundary(datetime(2026, 8, 31, 14, tzinfo=timezone.utc)) == datetime(
+        2026, 9, 1, 14, tzinfo=timezone.utc
+    )
 
 
 def test_statistic_id_is_stable_and_account_scoped():

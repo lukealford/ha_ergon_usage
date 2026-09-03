@@ -89,7 +89,7 @@ class RatePeriod:
     usage_effective_at: datetime
     supply_effective_at: datetime
     per_kwh_aud: Decimal
-    daily_supply_aud: Decimal
+    daily_supply_aud: Decimal | None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "account_id", _text(self.account_id, "account_id"))
@@ -97,7 +97,11 @@ class RatePeriod:
         object.__setattr__(self, "usage_effective_at", _utc_datetime(self.usage_effective_at, "usage_effective_at"))
         object.__setattr__(self, "supply_effective_at", _utc_datetime(self.supply_effective_at, "supply_effective_at"))
         object.__setattr__(self, "per_kwh_aud", _decimal(self.per_kwh_aud, "per_kwh_aud"))
-        object.__setattr__(self, "daily_supply_aud", _decimal(self.daily_supply_aud, "daily_supply_aud"))
+        object.__setattr__(
+            self,
+            "daily_supply_aud",
+            _decimal(self.daily_supply_aud, "daily_supply_aud", allow_none=True),
+        )
 
 
 @dataclass(frozen=True, slots=True)

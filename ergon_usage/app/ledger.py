@@ -11,6 +11,7 @@ import sqlite3
 from typing import Iterator, Sequence
 
 from .models import CostComponent, RatePeriod, StatisticPoint, TariffRate, UsageReading
+from .normalize import effective_supply_boundary, effective_usage_boundary
 
 
 def _utc_datetime(value: datetime, field_name: str) -> datetime:
@@ -229,6 +230,15 @@ class Ledger:
                 if row is not None and _rate_values_match(row, rate):
                     unchanged += 1
                     continue
+                previous = self._connection.execute(
+                    """
+                    SELECT per_kwh_aud, daily_supply_aud FROM tariff_rates
+                    WHERE account_id = ? AND tariff = ? AND observed_at < ?
+                    ORDER BY observed_at DESC
+                    LIMIT 1
+                    """,
+                    (rate.account_id, rate.tariff, observed_at),
+                ).fetchone()
                 changed += 1
                 self._connection.execute(
                     """
@@ -241,15 +251,33 @@ class Ledger:
                     """,
                     (rate.account_id, rate.tariff, observed_at, *values),
                 )
-                earliest_changed = _earlier(earliest_changed, rate.observed_at)
+                boundary = _rate_change_boundary(previous, rate)
+                if boundary is not None:
+                    earliest_changed = _earlier(earliest_changed, boundary)
         return RateUpsertResult(changed, unchanged, earliest_changed)
 
     def rate_periods(self, account_id: str, tariff: str) -> list[RatePeriod]:
-        _require_text(account_id, "account_id")
-        _require_text(tariff, "tariff")
-        # Tariff observations are deliberately not converted to effective periods
-        # here. Their effective boundaries are a Task 5 concern.
-        return []
+        account_id = _require_text(account_id, "account_id")
+        tariff = _require_text(tariff, "tariff")
+        rows = self._connection.execute(
+            """
+            SELECT observed_at, per_kwh_aud, daily_supply_aud FROM tariff_rates
+            WHERE account_id = ? AND tariff = ?
+            ORDER BY observed_at
+            """,
+            (account_id, tariff),
+        ).fetchall()
+        return [
+            RatePeriod(
+                account_id,
+                tariff,
+                effective_usage_boundary(observed_at := _from_timestamp(row["observed_at"])),
+                effective_supply_boundary(observed_at),
+                Decimal(row["per_kwh_aud"]),
+                Decimal(row["daily_supply_aud"]) if row["daily_supply_aud"] is not None else None,
+            )
+            for row in rows
+        ]
 
     def cost_components_from(
         self, account_id: str, tariff: str, earliest: datetime | None
@@ -393,3 +421,14 @@ def _decimal_text(value: Decimal | None) -> str | None:
 def _rate_values_match(row: sqlite3.Row, rate: TariffRate) -> bool:
     stored_supply = Decimal(row["daily_supply_aud"]) if row["daily_supply_aud"] is not None else None
     return Decimal(row["per_kwh_aud"]) == rate.per_kwh_aud and stored_supply == rate.daily_supply_aud
+
+
+def _rate_change_boundary(previous: sqlite3.Row | None, rate: TariffRate) -> datetime | None:
+    if previous is None or Decimal(previous["per_kwh_aud"]) != rate.per_kwh_aud:
+        return effective_usage_boundary(rate.observed_at)
+    previous_supply = (
+        Decimal(previous["daily_supply_aud"]) if previous["daily_supply_aud"] is not None else None
+    )
+    if previous_supply != rate.daily_supply_aud:
+        return effective_supply_boundary(rate.observed_at)
+    return None
