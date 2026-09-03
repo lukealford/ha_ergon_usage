@@ -84,10 +84,20 @@ async def _first_visible(page, selectors: tuple[str, ...]) -> str:
 class ErgonClient:
     """Automates the Ergon portal with one authenticated browser per run."""
 
-    def __init__(self, settings: Settings, browser_factory: BrowserOpener | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        browser_factory: BrowserOpener | None = None,
+        *,
+        headful: bool = False,
+    ) -> None:
         self._settings = settings
         if browser_factory is None:
+            self._headful = headful
             browser_factory = _default_browser_factory
+        else:
+            # Injected factories manage their own launch options.
+            self._headful = False
         self._browser_factory = browser_factory
 
     # -- public API ------------------------------------------------------
@@ -147,7 +157,10 @@ class ErgonClient:
     def _run(self):
         """Context manager performing login and account discovery."""
 
-        return _AuthenticatedRun(self._settings, self._browser_factory)
+        return _AuthenticatedRun(
+            self._settings, self._browser_factory, headful=self._headful
+        )
+
 
 
 class _Portal:
@@ -161,9 +174,12 @@ class _Portal:
 class _AuthenticatedRun:
     """Async context manager: one browser, one context, login, discovery."""
 
-    def __init__(self, settings: Settings, browser_factory: BrowserOpener) -> None:
+    def __init__(
+        self, settings: Settings, browser_factory: BrowserOpener, *, headful: bool = False
+    ) -> None:
         self._settings = settings
         self._browser_factory = browser_factory
+        self._headful = headful
         self._opener = None
         self._browser = None
         self._context = None
@@ -301,15 +317,15 @@ def _resolve_readings(
     return FetchResult(account_id=account_id, readings=tuple(readings), source=source)
 
 
-def _default_browser_factory(settings: Settings):
-    """Launch headless Chromium; playwright is imported lazily here."""
+def _default_browser_factory(settings: Settings, headful: bool = False):
+    """Launch Chromium; playwright is imported lazily here."""
 
     from playwright.async_api import async_playwright  # noqa: PLC0415
 
     class _Opener:
         async def __aenter__(self):
             self._pw = await async_playwright().start()
-            return await self._pw.chromium.launch(headless=True)
+            return await self._pw.chromium.launch(headless=not headful)
 
         async def __aexit__(self, *_exc) -> None:
             await self._pw.stop()

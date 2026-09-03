@@ -121,6 +121,15 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Allow overwriting an existing output file.",
     )
+    parser.add_argument(
+        "--headful",
+        action="store_true",
+        help=(
+            "Run with a visible browser window so the AWS WAF captcha can "
+            "be solved manually. The solved aws-waf-token cookie (~3 day "
+            "lifetime) is printed for reuse in headless runs."
+        ),
+    )
     args = parser.parse_args(argv)
 
     day = _parse_day(args.day)
@@ -131,7 +140,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     settings = _settings_from_environment(os.environ)
-    client = ErgonClient(settings)
+    client = ErgonClient(settings, headful=args.headful)
 
     async def run() -> dict:
         result = await client.fetch_day(day)
