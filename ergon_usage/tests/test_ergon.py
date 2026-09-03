@@ -10,7 +10,11 @@ Fake behaviour contract (mirrors real Playwright):
   (matching the real Playwright API).
 - ``page.on("response", handler)`` registers a listener; the page fires the
   handler for responses emitted around a navigation.
-- ``page.url`` is a plain attribute updated by navigation/submit.
+- ``page.url`` is a plain attribute updated by navigation.
+- ``click()`` resolves when the navigation *starts*, not completes: it does
+  NOT synchronously update ``page.url``.  Callers must explicitly await
+  ``wait_for_url(pattern, timeout=...)``; a failed login never reaches the
+  portal URL, so ``wait_for_url`` raises ``FakeTimeoutError``.
 """
 
 import json
@@ -63,6 +67,10 @@ class FakeResponse:
         return self._payload
 
 
+class FakeTimeoutError(Exception):
+    """Mimics ``playwright.async_api.TimeoutError`` for failed waits."""
+
+
 class FakePage:
     """Fake Page: navigation, form fill, response events, content."""
 
@@ -112,10 +120,17 @@ class FakePage:
     async def click(self, selector: str) -> None:
         self.clicked.append(selector)
         self.scenario.navigations.append(f"click:{selector}")
-        # Successful submit navigates to the portal dashboard URL.
+        # Real Playwright click() resolves when navigation starts, NOT when
+        # it completes, so page.url is deliberately NOT updated here.
+
+    async def wait_for_url(self, _pattern: str, timeout=None) -> None:
+        self.scenario.waited_for_url += 1
+        # Successful submit eventually lands on the portal dashboard URL;
+        # failed logins never navigate, so the wait times out.
         if self.scenario.login_succeeds:
             self.url = self.scenario.post_login_url
-        # Failed logins leave the page on the login host.
+        else:
+            raise FakeTimeoutError(f"Timeout {timeout}ms waiting for URL.")
 
     async def content(self) -> str:
         return self.scenario.page_html
@@ -161,6 +176,7 @@ class Scenario:
         self.context_closed = False
         self.browser_closed = False
         self.login_succeeds = True
+        self.waited_for_url = 0
         self.post_login_url = PORTAL_URL
         self.page_html = ""
         self.usage_responses: list[FakeResponse] = []

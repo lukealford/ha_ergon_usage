@@ -28,9 +28,14 @@ PORTAL_BASE = "https://myaccount.ergonretail.com.au/portal"
 USAGE_URL_TEMPLATE = PORTAL_BASE + "/{account}/usage"
 TARIFF_URL_TEMPLATE = PORTAL_BASE + "/{account}/tariff-metering"
 
-# Ordered, explicit selectors for the login form.  Each entry lists label
-# text first and matching name/id attributes as fallbacks; the first
-# selector that resolves to an element is used.
+# Bounded wait (ms) for the portal to load after submitting credentials.
+LOGIN_WAIT_MS = 15_000
+
+# Ordered, explicit attribute selectors for the login form.  There are no
+# visible label texts to rely on, so each entry is a CSS attribute selector:
+# the semantic ``type``/``autocomplete`` attributes first, then matching
+# ``name``/``id`` fallbacks.  The first selector that resolves to an element
+# is used.
 EMAIL_SELECTORS = (
     'input[type="email"]',
     'input[name="email"]',
@@ -202,6 +207,14 @@ class _AuthenticatedRun:
         await page.fill(password_selector, self._settings.ergon_password)
         submit_selector = await _first_visible(page, SUBMIT_SELECTORS)
         await page.click(submit_selector)
+        # click() resolves when navigation starts, not completes: wait for
+        # the portal to actually load before inspecting the URL.  A failed
+        # login never reaches the portal, so the bounded wait times out and
+        # is converted into an AuthenticationError.
+        try:
+            await page.wait_for_url(f"{PORTAL_BASE}**", timeout=LOGIN_WAIT_MS)
+        except Exception:  # noqa: BLE001 - navigation failure means bad login
+            raise AuthenticationError() from None
         if not str(page.url).startswith(PORTAL_BASE):
             raise AuthenticationError()
 
@@ -213,14 +226,14 @@ class _AuthenticatedRun:
         except AccountDiscoveryError:
             # Post-login URL may not embed the account; look at anchors on
             # the landing page before giving up.
-            links = await await_page_hrefs(page)
+            links = await _page_hrefs(page)
             try:
                 return discover_single_account(links)
             except AccountDiscoveryError:
                 raise AccountDiscoveryError() from None
 
 
-async def await_page_hrefs(page) -> list[str]:
+async def _page_hrefs(page) -> list[str]:
     """Best-effort href collection from the post-login page."""
 
     try:

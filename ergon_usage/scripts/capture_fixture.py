@@ -137,7 +137,6 @@ def main(argv: list[str] | None = None) -> int:
         result = await client.fetch_day(day)
         return {
             "day": day.isoformat(),
-            "account": None,  # never written; placeholder removed below
             "source": result.source,
             "readings": [
                 {
@@ -150,7 +149,6 @@ def main(argv: list[str] | None = None) -> int:
         }
 
     capture = asyncio.run(run())
-    capture.pop("account", None)  # explicit: account IDs are never written
 
     output_path.write_text(
         json.dumps(redact_payload(capture), indent=2), encoding="utf-8"
