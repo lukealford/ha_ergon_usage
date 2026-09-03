@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Mapping
 
 from app.config import Settings
-from app.ergon import ErgonClient
+from app.ergon import ErgonClient, WafTokenStore
 
 _REDACT_RE = re.compile(
     r"account|customer|email|address|name|token|cookie|session", re.IGNORECASE
@@ -141,7 +141,12 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     settings = _settings_from_environment(os.environ)
-    client = ErgonClient(settings, headful=args.headful)
+    # Share the add-on's WAF token store: a captcha solved here also
+    # unblocks the add-on, and vice versa (~3-day token lifetime).
+    waf_store = WafTokenStore(
+        Path(settings.data_dir) / "waf_state.json"
+    )
+    client = ErgonClient(settings, headful=args.headful, waf_store=waf_store)
 
     async def run() -> dict:
         result = await client.fetch_day(day)
