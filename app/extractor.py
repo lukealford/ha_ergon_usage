@@ -225,6 +225,12 @@ _CHART_DAY_FORMATS = (
 
 
 def _parse_chart_day(value: object) -> datetime:
+    # Playwright serializes JS Date objects (the live portal's payload
+    # carries them) to Python datetime instances directly.
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
     if not isinstance(value, str) or not value.strip():
         raise ExtractionError("Chart payload 'day' must be a non-empty string.")
     source = value.strip()
