@@ -25,6 +25,15 @@ _BIND_HOST = "0.0.0.0"
 _BIND_PORT = 8099
 
 
+def _options_path() -> Path:
+    """Options path, overridable for local (non-container) runs."""
+
+    import os
+
+    override = os.environ.get("ERGON_OPTIONS_PATH")
+    return Path(override) if override else _OPTIONS_PATH
+
+
 def load_settings(path: Path = _OPTIONS_PATH, environ: dict[str, str] | None = None) -> Settings:
     """Load add-on settings honoring ERGON_DATA_DIR for tests."""
 
@@ -48,7 +57,7 @@ def configure_logging(settings: Settings) -> None:
 
 
 async def async_main() -> None:
-    settings = load_settings()
+    settings = load_settings(_options_path())
     configure_logging(settings)
 
     ledger = Ledger.open(Path(settings.data_dir) / _LEDGER_NAME)
