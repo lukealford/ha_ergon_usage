@@ -6,6 +6,7 @@ __pycache__/
 # Owner's real captured usage data from manual probes — never commit.
 scripts/payload_dump.json
 probe.json
+options.json
 # WAF token state (live cookies) — never commit.
 waf_state.json
 *.tmp
