@@ -123,24 +123,20 @@ class FakePage:
         # Real Playwright click() resolves when navigation starts, NOT when
         # it completes, so page.url is deliberately NOT updated here.
 
-    async def wait_for_selector(self, _selector: str, timeout=None) -> None:
-        # The login form renders shortly after domcontentloaded; the fake
-        # always has inputs available, so this returns immediately.
-        return
+    async def wait_for_selector(self, selector: str, timeout=None) -> None:
+        """Model real Playwright: waits until the selector exists.
 
-    async def wait_for_selector(self, _selector: str, timeout=None) -> None:
-        # The login form renders shortly after domcontentloaded; the fake
-        # always has inputs available, so this returns immediately.
+        The account-link selector (a[href*="/portal/A-"]) only appears on
+        successful login.  Any other selector (login form inputs) is always
+        present in the fake.
+        """
+        if "/portal/A-" in selector:
+            self.scenario.waited_for_url += 1
+            if self.scenario.login_succeeds:
+                self.url = self.scenario.post_login_url
+            else:
+                raise FakeTimeoutError(f"Timeout {timeout}ms waiting for {selector}.")
         return
-
-    async def wait_for_url(self, _pattern: str, timeout=None) -> None:
-        self.scenario.waited_for_url += 1
-        # Successful submit eventually lands on the portal dashboard URL;
-        # failed logins never navigate, so the wait times out.
-        if self.scenario.login_succeeds:
-            self.url = self.scenario.post_login_url
-        else:
-            raise FakeTimeoutError(f"Timeout {timeout}ms waiting for URL.")
 
     async def content(self) -> str:
         return self.scenario.page_html

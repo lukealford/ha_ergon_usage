@@ -252,28 +252,31 @@ class _AuthenticatedRun:
         await page.fill(password_selector, self._settings.ergon_password)
         submit_selector = await _first_visible(page, SUBMIT_SELECTORS)
         await page.click(submit_selector)
-        # click() resolves when navigation starts, not completes: wait for
-        # the portal to actually load before inspecting the URL.  A failed
-        # login never reaches the portal, so the bounded wait times out and
-        # is converted into an AuthenticationError.
+        # The portal is a single-page app: after login the URL stays at
+        # /portal while the dashboard renders.  Wait for the account link
+        # (e.g. /portal/A-XXXXXXXX) to appear in the nav instead of watching
+        # the URL.  A failed login never renders it, so the bounded wait
+        # times out and is converted into an AuthenticationError.
         try:
-            await page.wait_for_url(f"{PORTAL_BASE}**", timeout=LOGIN_WAIT_MS)
+            await page.wait_for_selector(
+                'a[href*="/portal/A-"]',
+                timeout=CHALLENGE_WAIT_MS if self._headful else LOGIN_WAIT_MS,
+            )
         except Exception:  # noqa: BLE001 - navigation failure means bad login
             raise AuthenticationError() from None
-        if not str(page.url).startswith(PORTAL_BASE):
-            raise AuthenticationError()
 
     @staticmethod
     async def _discover_account(page) -> str:
-        url = str(page.url)
+        # The login wait has already confirmed an account link exists; this
+        # collects the hrefs (including the SPA nav) and extracts the single
+        # A-... account from them.
+        links = await _page_hrefs(page)
         try:
-            return discover_single_account([url])
+            return discover_single_account(links)
         except AccountDiscoveryError:
-            # Post-login URL may not embed the account; look at anchors on
-            # the landing page before giving up.
-            links = await _page_hrefs(page)
+            # Fall back to the URL itself (older flows embedded the account).
             try:
-                return discover_single_account(links)
+                return discover_single_account([str(page.url)])
             except AccountDiscoveryError:
                 raise AccountDiscoveryError() from None
 
