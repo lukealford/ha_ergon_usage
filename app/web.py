@@ -192,8 +192,11 @@ def render_verify_page() -> str:
         "<p id=\"state\">Loading…</p>"
         "<img id=\"shot\" alt=\"Portal screenshot\" width=\"640\" height=\"400\""
         " src=\"./api/verify/screenshot\">"
-        "<form method=\"post\" action=\"./api/verify/stop\">"
-        "<button type=\"submit\">Stop</button></form>"
+        "<p>"
+        "<button type=\"button\" id=\"begin\">Begin challenge</button> "
+        "<button type=\"button\" id=\"reload\">Reload page</button> "
+        "<form method=\"post\" action=\"./api/verify/stop\" style=\"display:inline\">"
+        "<button type=\"submit\">Stop</button></form></p>"
         "<script>"
         "const VIEW_W = 1280, VIEW_H = 800;"
         "async function refreshState() {"
@@ -230,6 +233,14 @@ def render_verify_page() -> str:
         "      headers: {'Content-Type': 'application/json'},"
         "      body: JSON.stringify({x: x, y: y})});"
         "  } catch (e) {}"
+        "});"
+        "document.getElementById('begin').addEventListener('click', async () => {"
+        "  try { await fetch('./api/verify/begin', {method: 'POST'}); } catch (e) {}"
+        "  refreshShot();"
+        "});"
+        "document.getElementById('reload').addEventListener('click', async () => {"
+        "  try { await fetch('./api/verify/reload', {method: 'POST'}); } catch (e) {}"
+        "  refreshShot();"
         "});"
         "refreshState(); refreshShot();"
         "</script></body></html>"
@@ -305,6 +316,12 @@ def create_app(coordinator: Any, verification: Any = None) -> web.Application:
         result = await verification.click(x, y)
         return _no_store(web.json_response(result))
 
+    async def verify_reload(request: web.Request) -> web.Response:
+        return _no_store(web.json_response(await verification.reload()))
+
+    async def verify_begin(request: web.Request) -> web.Response:
+        return _no_store(web.json_response(await verification.click_begin()))
+
     async def verify_start(request: web.Request) -> web.Response:
         state = await verification.start()
         return _no_store(web.json_response(state))
@@ -322,6 +339,8 @@ def create_app(coordinator: Any, verification: Any = None) -> web.Application:
         app.router.add_get("/api/verify/state", verify_state)
         app.router.add_get("/api/verify/screenshot", verify_screenshot)
         app.router.add_post("/api/verify/click", verify_click)
+        app.router.add_post("/api/verify/reload", verify_reload)
+        app.router.add_post("/api/verify/begin", verify_begin)
         app.router.add_post("/api/verify/start", verify_start)
         app.router.add_post("/api/verify/stop", verify_stop)
     return app

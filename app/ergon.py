@@ -816,6 +816,39 @@ class VerificationSession:
             return
         await self._classify()
 
+    async def reload(self) -> None:
+        """Reload the challenge page — the owner's known bot-detection fix."""
+
+        if self.page is None or self._closed or self._status == "error":
+            return
+        try:
+            await self.page.reload(wait_until="domcontentloaded")
+            await self.page.wait_for_timeout(CLICK_SETTLE_MS)
+        except Exception:  # noqa: BLE001
+            return
+        await self._classify()
+
+    async def click_begin(self) -> bool:
+        """Click the AWS challenge's Begin button if present.
+
+        The challenge renders a two-stage flow (Begin, then an image grid);
+        pressing Begin up front saves the operator a click.  Returns True
+        when the button was found and pressed.
+        """
+
+        if self.page is None or self._closed or self._status == "error":
+            return False
+        try:
+            begin = self.page.locator("#amzn-captcha-verify-button")
+            if await begin.count() == 0:
+                return False
+            await begin.click(timeout=5_000)
+            await self.page.wait_for_timeout(CLICK_SETTLE_MS)
+        except Exception:  # noqa: BLE001
+            return False
+        await self._classify()
+        return True
+
     async def fill_login(self, email: str, password: str) -> None:
         """Fill and submit the sign-in form (same selectors as _login).
 
@@ -940,6 +973,18 @@ class VerificationManager:
             return {"clicked": False}
         await self._session.click(x, y)
         return {"clicked": True}
+
+    async def reload(self) -> dict:
+        if self._session is None or self._session.closed:
+            return {"reloaded": False}
+        await self._session.reload()
+        return {"reloaded": True}
+
+    async def click_begin(self) -> dict:
+        if self._session is None or self._session.closed:
+            return {"clicked": False}
+        pressed = await self._session.click_begin()
+        return {"clicked": pressed}
 
     async def fill_login(self, email: str, password: str) -> dict:
         if self._session is None or self._session.closed:
