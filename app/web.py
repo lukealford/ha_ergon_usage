@@ -289,9 +289,18 @@ def create_app(coordinator: Any, verification: Any = None) -> web.Application:
     async def verify_click(request: web.Request) -> web.Response:
         try:
             payload = await request.json()
-            x = int(payload["x"])
-            y = int(payload["y"])
+            x = payload["x"]
+            y = payload["y"]
         except Exception:  # noqa: BLE001 - malformed bodies rejected uniformly
+            return _no_store(web.json_response({"error": "invalid"}, status=400))
+        # Coordinates must be plain ints (not bool) within the viewer viewport.
+        if (
+            isinstance(x, bool)
+            or isinstance(y, bool)
+            or not isinstance(x, int)
+            or not isinstance(y, int)
+            or not (0 <= x < 1280 and 0 <= y < 800)
+        ):
             return _no_store(web.json_response({"error": "invalid"}, status=400))
         result = await verification.click(x, y)
         return _no_store(web.json_response(result))

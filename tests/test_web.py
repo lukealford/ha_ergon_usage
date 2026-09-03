@@ -296,7 +296,6 @@ class TestVerificationEndpoints:
         assert "./api/verify/state" in text
         assert "./api/verify/click" in text
         assert "./api/verify/stop" in text
-        assert "http" not in text.replace("https:", "").replace("http:", "") or True
         assert "<img" in text
 
     @pytest.mark.asyncio
@@ -329,7 +328,19 @@ class TestVerificationEndpoints:
         assert good.status == 200
         assert await good.json() == {"clicked": True}
         assert fake.clicks == [(640, 400)]
-        for bad in ({"x": "a", "y": 1}, {"y": 1}, None):
+        for bad in (
+            {"x": "a", "y": 1},
+            {"y": 1},
+            None,
+            {"x": True, "y": 1},
+            {"x": 1.5, "y": 1},
+            {"x": -1, "y": 1},
+            {"x": 1, "y": -1},
+            {"x": 1280, "y": 1},
+            {"x": 1, "y": 800},
+            {"x": 99999, "y": 1},
+            {"x": 1, "y": 99999},
+        ):
             response = await client.post("/api/verify/click", json=bad)
             assert response.status == 400
         assert fake.clicks == [(640, 400)]

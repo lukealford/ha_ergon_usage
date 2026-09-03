@@ -740,6 +740,7 @@ class VerificationSession:
                 await self.page.goto(PORTAL_BASE, wait_until="domcontentloaded")
             except Exception:  # noqa: BLE001 - navigation failure is a safe status
                 self._set_error("Portal could not be reached. Try again.")
+                await self._teardown()
                 return
             await self._classify()
             if self._status in ("idle", "challenge", "signin"):
@@ -816,7 +817,11 @@ class VerificationSession:
         await self._classify()
 
     async def fill_login(self, email: str, password: str) -> None:
-        """Fill and submit the sign-in form (same selectors as _login)."""
+        """Fill and submit the sign-in form (same selectors as _login).
+
+        Reserved for a future operator surface (credential entry is not
+        exposed in the viewer UI today).
+        """
 
         if self._status != "signin" or self.page is None or self._closed:
             return
@@ -846,9 +851,13 @@ class VerificationSession:
         await self._teardown()
 
     async def _teardown(self) -> None:
-        if self._monitor_task is not None:
+        # If the monitor task itself initiated teardown (timeout or done
+        # transition), cancelling the currently running task would raise
+        # CancelledError at the next await and skip the browser cleanup below.
+        current_task = asyncio.current_task()
+        if self._monitor_task is not None and self._monitor_task is not current_task:
             self._monitor_task.cancel()
-            self._monitor_task = None
+        self._monitor_task = None
         self.page = None
         if self._context is not None:
             try:
@@ -883,6 +892,7 @@ class VerificationManager:
         self._waf_store = waf_store
         self._browser_factory = browser_factory
         self._session: VerificationSession | None = None
+        self._lock = asyncio.Lock()
 
     def _state(self, active: bool) -> dict:
         session = self._session
@@ -893,14 +903,26 @@ class VerificationManager:
         }
 
     async def start(self) -> dict:
-        # One live session: a stale session is closed before starting anew.
-        if self._session is not None and not self._session.closed:
-            await self._session.close()
-        self._session = VerificationSession(
-            self._settings, self._waf_store, browser_factory=self._browser_factory
-        )
-        await self._session.start()
-        return self._state(self._session.status not in ("error", "idle"))
+        """Start (or reuse) the single live verification session.
+
+        Serialized by a lock so overlapping requests cannot both construct
+        sessions; an already-active session is reused rather than restarted.
+        """
+        async with self._lock:
+            if (
+                self._session is not None
+                and not self._session.closed
+                and self._session.status not in ("error", "idle")
+            ):
+                return self._state(True)
+            # A stale (closed/errored) session is discarded before starting.
+            if self._session is not None:
+                await self._session.close()
+            self._session = VerificationSession(
+                self._settings, self._waf_store, browser_factory=self._browser_factory
+            )
+            await self._session.start()
+            return self._state(self._session.status not in ("error", "idle"))
 
     async def status(self) -> dict:
         session = self._session
@@ -926,9 +948,10 @@ class VerificationManager:
         return {"submitted": True}
 
     async def stop(self) -> dict:
-        if self._session is not None:
-            await self._session.close()
-        return {"stopped": True}
+        async with self._lock:
+            if self._session is not None:
+                await self._session.close()
+            return {"stopped": True}
 
 
 def _default_browser_factory(settings: Settings, headful: bool = False):

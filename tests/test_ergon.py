@@ -877,6 +877,30 @@ class TestVerificationSession:
         await session.close()
 
     @pytest.mark.asyncio
+    async def test_monitor_timeout_closes_browser(self, tmp_path, monkeypatch):
+        """On timeout the session must fully tear down the browser (C1)."""
+        import app.ergon as ergon_mod
+        from app.ergon import VerificationSession
+
+        monkeypatch.setattr(ergon_mod, "VERIFY_TIMEOUT_SECONDS", 0.05)
+        monkeypatch.setattr(ergon_mod, "VERIFY_POLL_SECONDS", 0.01)
+        fake = _VerifyScenario()
+        fake.page.visible_selectors = set()  # challenge page never advances
+        session = VerificationSession(Settings(), None, browser_factory=fake.factory)
+        await session.start()
+        assert session.status == "challenge"
+        for _ in range(100):
+            if session.status == "error":
+                break
+            await asyncio.sleep(0.02)
+        assert session.status == "error"
+        assert "timed out" in (session.error_message or "").lower()
+        # No orphaned browser: fake context/browser/opener all closed.
+        assert fake.context.closed
+        assert fake.browser.closed
+        await session.close()  # must be safe to call again
+
+    @pytest.mark.asyncio
     async def test_close_without_account_link_does_not_save_cookies(self, tmp_path):
         from app.ergon import VerificationSession
 
@@ -929,6 +953,28 @@ class TestVerificationSession:
 
 class TestVerificationManager:
     @pytest.mark.asyncio
+    async def test_concurrent_start_creates_one_session(self, tmp_path):
+        """Overlapping start() calls must not leak a second browser (I1)."""
+        from app.ergon import VerificationManager
+
+        fake = _VerifyScenario()
+        creations = []
+
+        original_factory = fake.factory
+
+        def counting_factory(settings):
+            creations.append(1)
+            return original_factory(settings)
+
+        manager = VerificationManager(
+            Settings(), None, browser_factory=counting_factory
+        )
+        # Gather without awaiting the first fully: both race on the lock.
+        states = await asyncio.gather(manager.start(), manager.start())
+        assert len(creations) == 1
+        assert all(state["status"] == "signin" for state in states)
+        await manager.stop()
+    @pytest.mark.asyncio
     async def test_single_live_session_and_sanitized_state(self, tmp_path):
         from app.ergon import VerificationManager
 
@@ -937,11 +983,12 @@ class TestVerificationManager:
         state = await manager.start()
         assert state["status"] == "signin"
         assert set(state) == {"active", "status", "error"}
-        # Starting again closes the old session's browser before starting.
+        # Starting again reuses the live session instead of leaking a second.
         fake.browser.closed = False
         await manager.start()
-        assert fake.browser.closed
+        assert not fake.browser.closed
         await manager.stop()
+        assert fake.browser.closed
 
     @pytest.mark.asyncio
     async def test_stop_reports_and_clears(self, tmp_path):
