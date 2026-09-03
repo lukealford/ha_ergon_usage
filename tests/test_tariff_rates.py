@@ -121,3 +121,55 @@ def test_unlabelled_money_is_ignored(tariff_html):
     html = tariff_html.replace("$0.28895 per kWh", "$0.28895 (usage rate)")
     with pytest.raises(ExtractionError):
         extract_tariff_rates(html, "A-TEST123", OBSERVED_AT)
+
+
+# -- Live-portal accordion layout ------------------------------------------
+
+# Reproduced from the live portal (2026-09-03, scripts/diagnose_rates_page.py):
+# tariffs are accordion sections with H1 headings — no card containers.
+ACCORDION_HTML = """
+<html>
+  <body>
+    <h2>Your Tariff Info</h2>
+    <h1>Tariff 11</h1>
+    <div><p>All usage per kWh $ 0.28895 Supply charge per day $ 1.80508</p></div>
+    <h1>Tariff 33</h1>
+    <div><p>All usage per kWh <b>$ 0.16764</b></p></div>
+  </body>
+</html>
+"""
+
+
+def test_extracts_rates_from_accordion_sections():
+    rates = extract_tariff_rates(ACCORDION_HTML, "A-TEST123", OBSERVED_AT)
+    tariffs = by_tariff(rates)
+    assert tariffs["Tariff 11"].per_kwh_aud == Decimal("0.28895")
+    assert tariffs["Tariff 11"].daily_supply_aud == Decimal("1.80508")
+    assert tariffs["Tariff 33"].per_kwh_aud == Decimal("0.16764")
+    assert tariffs["Tariff 33"].daily_supply_aud is None
+
+
+def test_label_before_value_order_is_accepted():
+    # "per kWh $X" / "per day $X" — label first, value after, within a window.
+    html = """
+    <h1>Tariff 11</h1>
+    <p>per kWh $0.28895 and per day $1.80508</p>
+    """
+    rates = extract_tariff_rates(html, "A-TEST123", OBSERVED_AT)
+    tariffs = by_tariff(rates)
+    assert tariffs["Tariff 11"].per_kwh_aud == Decimal("0.28895")
+    assert tariffs["Tariff 11"].daily_supply_aud == Decimal("1.80508")
+
+
+def test_section_scope_ends_at_next_heading():
+    # A heading of ANY level closes the previous tariff's scope.  The per-day
+    # value under the non-tariff "Supply charges" heading therefore falls
+    # outside any tariff section and must be rejected as stray.
+    html = """
+    <h1>Tariff 11</h1>
+    <p>$0.28895 per kWh</p>
+    <h2>Supply charges</h2>
+    <p>$1.80508 per day</p>
+    """
+    with pytest.raises(ExtractionError):
+        extract_tariff_rates(html, "A-TEST123", OBSERVED_AT)

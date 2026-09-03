@@ -19,9 +19,26 @@ from html.parser import HTMLParser
 from .errors import ExtractionError
 from .models import TariffRate
 
-# Labels must be explicit: a bare "$0.28895" is never accepted.
+# Labels must be explicit: a bare "$0.28895" is never accepted.  Both the
+# live portal's "label ... $X" order and the historical "$X ... label" order
+# are accepted, with a bounded gap between label and value.
 _PER_KWH_RE = re.compile(r"\$\s*(?P<value>-?\d+(?:\.\d+)?)\s*(?:\n|\s)*per\s*kwh", re.IGNORECASE)
 _PER_DAY_RE = re.compile(r"\$\s*(?P<value>-?\d+(?:\.\d+)?)\s*(?:\n|\s)*per\s*day", re.IGNORECASE)
+_VALUE = r"\$\s*(?P<value>-?\d+(?:\.\d+)?)"
+# "per kWh ... $X" (label first, value after within GAP chars) and the
+# mirrored "$X ... per kWh".
+_KWH_LABEL_FIRST_RE = re.compile(
+    r"per\s*kwh(?:\s|\n){0,4}" + _VALUE, re.IGNORECASE
+)
+_KWH_VALUE_FIRST_RE = re.compile(
+    _VALUE + r"(?:\s|\n){0,4}per\s*kwh", re.IGNORECASE
+)
+_DAY_LABEL_FIRST_RE = re.compile(
+    r"per\s*day(?:\s|\n){0,4}" + _VALUE, re.IGNORECASE
+)
+_DAY_VALUE_FIRST_RE = re.compile(
+    _VALUE + r"(?:\s|\n){0,4}per\s*day", re.IGNORECASE
+)
 
 # Heading levels and container classes treated as tariff card headings/cards.
 _HEADING_TAGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
@@ -46,6 +63,7 @@ class _TariffCard:
     def __init__(self, name: str, in_card_container: bool) -> None:
         self.name = name
         self.in_card_container = in_card_container
+        self.chunks: list[str] = []
         self.per_kwh: Decimal | None = None
         self.daily_supply: Decimal | None = None
 
@@ -61,6 +79,7 @@ class _TariffPageParser(HTMLParser):
         self._current_card: _TariffCard | None = None
         self._current_heading: str | None = None
         self._inside_heading = False
+        self._stray_buffer: list[str] = []
 
     # -- element handling ------------------------------------------------
 
@@ -98,17 +117,39 @@ class _TariffPageParser(HTMLParser):
             self._current_heading += data
             return
         if self._current_card is not None:
-            self._record(self._current_card, data)
+            # Inline tags (e.g. <b>) split a "per kWh $X" pair across chunks;
+            # buffer per scope and scan the joined text at scope close.
+            self._current_card.chunks.append(data)
         else:
-            self._check_stray(data)
+            self._stray_buffer.append(data)
+
+    def _scan_chunks(self, chunks: list[str]) -> tuple[Decimal | None, Decimal | None]:
+        text = " ".join(chunks)
+        per_kwh: Decimal | None = None
+        per_day: Decimal | None = None
+        match = (
+            _KWH_VALUE_FIRST_RE.search(text) or _KWH_LABEL_FIRST_RE.search(text)
+        )
+        if match:
+            per_kwh = _parse_decimal(match.group("value"))
+        match = (
+            _DAY_VALUE_FIRST_RE.search(text) or _DAY_LABEL_FIRST_RE.search(text)
+        )
+        if match:
+            per_day = _parse_decimal(match.group("value"))
+        return per_kwh, per_day
 
     # -- card bookkeeping ------------------------------------------------
 
     def _finish_heading(self) -> None:
         name = " ".join((self._current_heading or "").split())
         self._current_heading = None
-        if name:
-            self._finish_card()
+        # Close the previous tariff's scope: any heading ends the section
+        # belonging to the last tariff (the live accordion page nests tariff
+        # content as siblings, not inside cards).
+        self._check_stray()
+        self._finish_card()
+        if "tariff" in name.lower():
             self._current_card = _TariffCard(name, self._inside_card_container())
 
     def _inside_card_container(self) -> bool:
@@ -118,26 +159,29 @@ class _TariffPageParser(HTMLParser):
         card = self._current_card
         self._current_card = None
         if card is not None:
+            card.per_kwh, card.daily_supply = self._scan_chunks(card.chunks)
             self.cards.append(card)
 
     # -- monetary value scanning -----------------------------------------
 
-    def _record(self, card: _TariffCard, text: str) -> None:
-        per_kwh = _PER_KWH_RE.search(text)
-        per_day = _PER_DAY_RE.search(text)
-        if per_kwh:
-            card.per_kwh = _parse_decimal(per_kwh.group("value"))
-        if per_day:
-            card.daily_supply = _parse_decimal(per_day.group("value"))
-
-    def _check_stray(self, text: str) -> None:
-        if _PER_KWH_RE.search(text) or _PER_DAY_RE.search(text):
-            self._stray_label = True
+    def _check_stray(self) -> None:
+        text = " ".join(self._stray_buffer)
+        self._stray_buffer = []
+        for pattern in (
+            _PER_KWH_RE,
+            _PER_DAY_RE,
+            _KWH_LABEL_FIRST_RE,
+            _DAY_LABEL_FIRST_RE,
+        ):
+            if pattern.search(text):
+                self._stray_label = True
+                return
 
     # -- result ----------------------------------------------------------
 
     def result(self) -> list[_TariffCard]:
         # Close any cards still open (e.g. unclosed tags at EOF).
+        self._check_stray()
         self._finish_card()
         if self._stray_label:
             raise ExtractionError(
