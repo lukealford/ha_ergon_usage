@@ -1,0 +1,62 @@
+{
+  "series": [
+    {
+      "name": "Tariff 11",
+      "data": [
+        {"timestamp": "31 Aug 2026 12:00AM", "value": 1.25},
+        {"timestamp": "31 Aug 2026 01:00AM", "value": 1.01},
+        {"timestamp": "31 Aug 2026 02:00AM", "value": 1.02},
+        {"timestamp": "31 Aug 2026 03:00AM", "value": 1.03},
+        {"timestamp": "31 Aug 2026 04:00AM", "value": 1.04},
+        {"timestamp": "31 Aug 2026 05:00AM", "value": 1.05},
+        {"timestamp": "31 Aug 2026 06:00AM", "value": 1.06},
+        {"timestamp": "31 Aug 2026 07:00AM", "value": 1.07},
+        {"timestamp": "31 Aug 2026 08:00AM", "value": 1.08},
+        {"timestamp": "31 Aug 2026 09:00AM", "value": 1.09},
+        {"timestamp": "31 Aug 2026 10:00AM", "value": 1.10},
+        {"timestamp": "31 Aug 2026 11:00AM", "value": 1.11},
+        {"timestamp": "31 Aug 2026 12:00PM", "value": 1.12},
+        {"timestamp": "31 Aug 2026 01:00PM", "value": 1.13},
+        {"timestamp": "31 Aug 2026 02:00PM", "value": 1.14},
+        {"timestamp": "31 Aug 2026 03:00PM", "value": 1.15},
+        {"timestamp": "31 Aug 2026 04:00PM", "value": 1.16},
+        {"timestamp": "31 Aug 2026 05:00PM", "value": 1.17},
+        {"timestamp": "31 Aug 2026 06:00PM", "value": 1.18},
+        {"timestamp": "31 Aug 2026 07:00PM", "value": 1.19},
+        {"timestamp": "31 Aug 2026 08:00PM", "value": 1.20},
+        {"timestamp": "31 Aug 2026 09:00PM", "value": 1.21},
+        {"timestamp": "31 Aug 2026 10:00PM", "value": 1.22},
+        {"timestamp": "31 Aug 2026 11:00PM", "value": 1.23}
+      ]
+    },
+    {
+      "name": "Tariff 33",
+      "data": [
+        {"timestamp": "31 Aug 2026 12:00AM", "value": 0},
+        {"timestamp": "31 Aug 2026 01:00AM", "value": 0.31},
+        {"timestamp": "31 Aug 2026 02:00AM", "value": 0.32},
+        {"timestamp": "31 Aug 2026 03:00AM", "value": 0.33},
+        {"timestamp": "31 Aug 2026 04:00AM", "value": 0.34},
+        {"timestamp": "31 Aug 2026 05:00AM", "value": 0.35},
+        {"timestamp": "31 Aug 2026 06:00AM", "value": 0.36},
+        {"timestamp": "31 Aug 2026 07:00AM", "value": 0.37},
+        {"timestamp": "31 Aug 2026 08:00AM", "value": 0.38},
+        {"timestamp": "31 Aug 2026 09:00AM", "value": 0.39},
+        {"timestamp": "31 Aug 2026 10:00AM", "value": 0.40},
+        {"timestamp": "31 Aug 2026 11:00AM", "value": 0.41},
+        {"timestamp": "31 Aug 2026 12:00PM", "value": 0.42},
+        {"timestamp": "31 Aug 2026 01:00PM", "value": 0.43},
+        {"timestamp": "31 Aug 2026 02:00PM", "value": 0.44},
+        {"timestamp": "31 Aug 2026 03:00PM", "value": 0.45},
+        {"timestamp": "31 Aug 2026 04:00PM", "value": 0.46},
+        {"timestamp": "31 Aug 2026 05:00PM", "value": 0.47},
+        {"timestamp": "31 Aug 2026 06:00PM", "value": 0.48},
+        {"timestamp": "31 Aug 2026 07:00PM", "value": 0.49},
+        {"timestamp": "31 Aug 2026 08:00PM", "value": 0.50},
+        {"timestamp": "31 Aug 2026 09:00PM", "value": 0.51},
+        {"timestamp": "31 Aug 2026 10:00PM", "value": 0.52},
+        {"timestamp": "31 Aug 2026 11:00PM", "value": 0.53}
+      ]
+    }
+  ]
+}
