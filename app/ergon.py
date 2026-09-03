@@ -82,24 +82,27 @@ SUBMIT_SELECTORS = (
 # element itself.  Returns ``[]`` when no payloads are found.
 _RECHARTS_PAYLOAD_JS = """
 () => {
-  const shapes = document.querySelectorAll('.recharts-bar-rectangle path, .recharts-bar-rectangle rect');
-  const rows = [];
-  const seen = new Set();
-  for (const shape of shapes) {
-    for (const key of Object.keys(shape)) {
-      if (!key.startsWith('__reactFiber$')) continue;
-      let fiber = shape[key];
-      for (let hop = 0; fiber && hop < 8; hop++) {
-        const payload = fiber.memoizedProps && fiber.memoizedProps.payload;
-        if (payload && typeof payload === 'object' && payload.day && typeof payload.day === 'string' && !seen.has(payload.day)) {
-          seen.add(payload.day);
-          rows.push(payload);
+    const shapes = [...document.querySelectorAll(
+        '.recharts-bar-rectangle path, .recharts-bar-rectangle rect')];
+    const rows = [];
+    for (const el of shapes) {
+        const keys = Object.keys(el).filter(k => k.startsWith('__react'));
+        for (const k of keys) {
+            let node = el[k];
+            for (let hop = 0; hop < 8 && node; hop++) {
+                const props = node.memoizedProps || node.pendingProps;
+                if (props && props.payload) {
+                    rows.push({
+                        series: props.name || props.payload.name || null,
+                        payload: props.payload,
+                    });
+                    break;
+                }
+                node = node.return || node.alternate || null;
+            }
         }
-        fiber = fiber.return;
-      }
     }
-  }
-  return rows;
+    return rows;
 }
 """
 
@@ -407,19 +410,28 @@ async def _capture_response_into(response, candidates: list[CapturedJson]) -> No
 async def _read_chart_payloads(page) -> list[dict]:
     """Best-effort read of Recharts bar payload rows via React fibers.
 
-    Retries briefly: the chart can render its shapes a moment before React
-    attaches payload props.  Returns [] only when no rows appear within the
-    bounded window.
+    Uses the exact algorithm proven by the manual probe: walk each bar
+    shape's React fiber/props for a ``payload`` prop, wrapping it with the
+    shape's ``series`` display name.  Retries briefly; returns [] only when
+    no rows appear within the bounded window.
     """
 
     attempts = 10
     for attempt in range(attempts):
         try:
-            rows = await page.evaluate(_RECHARTS_PAYLOAD_JS)
+            wrapped = await page.evaluate(_RECHARTS_PAYLOAD_JS)
         except Exception:  # noqa: BLE001 - portal markup may differ
             return []
-        if isinstance(rows, list) and rows:
-            return [row for row in rows if isinstance(row, dict)]
+        if isinstance(wrapped, list) and wrapped:
+            rows: list[dict] = []
+            for item in wrapped:
+                if not isinstance(item, dict):
+                    continue
+                payload = item.get("payload")
+                if isinstance(payload, dict):
+                    rows.append(payload)
+            if rows:
+                return rows
         if attempt < attempts - 1:
             await page.wait_for_timeout(1_000)
     return []

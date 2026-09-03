@@ -148,8 +148,10 @@ class FakePage:
         """Default to no chart payloads so chart extraction is a no-op."""
 
         self.evaluate_calls.append(script)
-        # The shape-count diagnostic query must return a number, not rows.
-        if "querySelectorAll" in script:
+        # The shape-count diagnostic query returns a number; it is the only
+        # evaluate that targets '.recharts-bar-rectangle' WITHOUT walking
+        # React fibers.
+        if "recharts-bar-rectangle" in script and "__react" not in script:
             return 0
         return self.evaluate_result
 
@@ -280,9 +282,11 @@ class TestFetchRolling:
 
         async def evaluate(self: FakePage, script: str) -> object:
             self.evaluate_calls.append(script)
+            if "recharts-bar-rectangle" in script and "__react" not in script:
+                return 2  # shape count
             return [
-                {"date": "31 Aug 12:00AM", "day": "2026-08-30 14:00:00+00:00", "RTC11": 1.25},
-                {"date": "31 Aug 01:00AM", "day": "2026-08-30 15:00:00+00:00", "RTC11": 0.5, "RTC33": 0.75},
+                {"series": "Tariff 11", "payload": {"date": "31 Aug 12:00AM", "day": "2026-08-30 14:00:00+00:00", "RTC11": 1.25}},
+                {"series": "Tariff 11", "payload": {"date": "31 Aug 01:00AM", "day": "2026-08-30 15:00:00+00:00", "RTC11": 0.5, "RTC33": 0.75}},
             ]
 
         FakePage.evaluate = evaluate  # type: ignore[method-assign]
