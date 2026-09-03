@@ -469,20 +469,23 @@ class _AuthenticatedRun:
     async def _login(self, page) -> None:
         # Navigate to the portal; unauthenticated visitors are redirected to
         # the auth sign-in page (confirmed live: /portal ->
-        # /auth/signin?callbackUrl=/portal).
+        # /auth/signin?callbackUrl=/portal).  With a restored session (WAF
+        # store carries the auth session token too), the dashboard renders
+        # immediately with no login form.
         await page.goto(PORTAL_BASE, wait_until="domcontentloaded")
-        # Wait for an actual LOGIN field, not any input: challenge pages
-        # render hidden inputs (e.g. WAF/turnstile response fields) that
-        # would satisfy a generic "input" selector.  In headful mode the
-        # operator may need to solve the challenge first, hence the long
-        # window; the challenge auto-advances to the sign-in form.
+        # Wait for EITHER state: already logged in (account link) or the
+        # sign-in form.  Challenge pages show neither (only hidden WAF
+        # inputs), so a generic "input" wait would mislead.
         try:
             await page.wait_for_selector(
-                ", ".join(EMAIL_SELECTORS),
+                ', '.join((*EMAIL_SELECTORS, 'a[href*="/portal/A-"]')),
                 timeout=LOGIN_WAIT_MS if not self._headful else CHALLENGE_WAIT_MS,
             )
         except Exception:  # noqa: BLE001 - challenge or blocked page
             raise AuthenticationError() from None
+        if await page.locator('a[href*="/portal/A-"]').count() > 0:
+            # Session restored; no login needed.
+            return
         email_selector = await _first_visible(page, EMAIL_SELECTORS)
         password_selector = await _first_visible(page, PASSWORD_SELECTORS)
         await page.fill(email_selector, self._settings.ergon_email)
