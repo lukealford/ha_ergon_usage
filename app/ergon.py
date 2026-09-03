@@ -164,7 +164,7 @@ class _AuthenticatedRun:
         self._opener = self._browser_factory(self._settings)
         self._browser = await self._opener.__aenter__()
         try:
-            self._context = self._browser.new_context()
+            self._context = await self._browser.new_context()
             page = await self._context.new_page()
             try:
                 await self._login(page)

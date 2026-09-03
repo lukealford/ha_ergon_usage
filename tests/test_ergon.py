@@ -158,7 +158,7 @@ class FakeBrowser:
         self.scenario = scenario
         self.closed = False
 
-    def new_context(self, **_kwargs) -> FakeContext:
+    async def new_context(self, **_kwargs) -> FakeContext:
         return FakeContext(self.scenario)
 
     async def close(self) -> None:
