@@ -18,7 +18,8 @@ Fake behaviour contract (mirrors real Playwright):
 """
 
 import json
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from decimal import Decimal
 from pathlib import Path
 
@@ -214,14 +215,21 @@ def make_client(scenario: Scenario) -> ErgonClient:
     return ErgonClient(Settings(), browser_factory=scenario.factory)
 
 
-def rolling_url(account: str = "A-TEST123") -> str:
-    return f"https://myaccount.ergonretail.com.au/portal/{account}/tariff-metering/usage?periodDays=3"
+def rolling_url(account: str = "A-TEST123", *, today: date | None = None) -> str:
+    today = today or datetime.now(ZoneInfo("Australia/Brisbane")).date()
+    start = today - timedelta(days=2)
+    return (
+        f"https://myaccount.ergonretail.com.au/portal/{account}/tariff-metering/usage"
+        f"?periodDays=custom&startDate={start.strftime('%d/%m/%Y')}"
+        f"&endDate={today.strftime('%d/%m/%Y')}"
+    )
 
 
 def day_url(day: date, account: str = "A-TEST123") -> str:
     return (
         f"https://myaccount.ergonretail.com.au/portal/{account}/tariff-metering/usage"
-        f"?day={day.strftime('%d/%m/%Y')}"
+        f"?periodDays=custom&startDate={day.strftime('%d/%m/%Y')}"
+        f"&endDate={day.strftime('%d/%m/%Y')}"
     )
 
 

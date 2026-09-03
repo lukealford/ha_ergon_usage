@@ -12,14 +12,15 @@ installed.  Tests inject a ``browser_factory`` and never import playwright.
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Awaitable, Callable, Literal
+from zoneinfo import ZoneInfo
 
 from .config import Settings
 from .errors import AccountDiscoveryError, AuthenticationError, ExtractionError
 from .extractor import CapturedJson, select_usage_payload, extract_dom
 from .models import TariffRate, UsageReading
-from .normalize import discover_single_account
+from .normalize import BRISBANE, discover_single_account
 from .tariff_rates import extract_tariff_rates
 
 logger = logging.getLogger(__name__)
@@ -140,11 +141,18 @@ class ErgonClient:
     # -- internals --------------------------------------------------------
 
     def _usage_url(self, account_id: str, day: date | None) -> str:
+        # Live-confirmed format: custom period with DD/MM/YYYY dates.  The
+        # rolling fetch uses a three-day window ending today.
         if day is None:
-            return USAGE_URL_TEMPLATE.format(account=account_id) + "?periodDays=3"
-        return (
-            USAGE_URL_TEMPLATE.format(account=account_id)
-            + f"?day={day.strftime('%d/%m/%Y')}"
+            today = datetime.now(ZoneInfo("Australia/Brisbane")).date()
+            start = today - timedelta(days=2)
+            return USAGE_URL_TEMPLATE.format(account=account_id) + (
+                f"?periodDays=custom&startDate={start.strftime('%d/%m/%Y')}"
+                f"&endDate={today.strftime('%d/%m/%Y')}"
+            )
+        return USAGE_URL_TEMPLATE.format(account=account_id) + (
+            f"?periodDays=custom&startDate={day.strftime('%d/%m/%Y')}"
+            f"&endDate={day.strftime('%d/%m/%Y')}"
         )
 
     async def _fetch_usage(self, day: date | None) -> FetchResult:
