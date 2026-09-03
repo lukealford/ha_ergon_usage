@@ -91,7 +91,7 @@ _RECHARTS_PAYLOAD_JS = """
       let fiber = shape[key];
       for (let hop = 0; fiber && hop < 8; hop++) {
         const payload = fiber.memoizedProps && fiber.memoizedProps.payload;
-        if (payload && typeof payload === 'object' && payload.day && !seen.has(payload.day)) {
+        if (payload && typeof payload === 'object' && payload.day && typeof payload.day === 'string' && !seen.has(payload.day)) {
           seen.add(payload.day);
           rows.push(payload);
         }

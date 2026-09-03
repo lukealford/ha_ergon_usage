@@ -270,10 +270,19 @@ def extract_chart_payloads(
 
     readings: list[UsageReading] = []
     seen: set[tuple[str, object]] = set()
+    malformed = 0
     for row in rows:
-        if not isinstance(row, Mapping):
-            raise ExtractionError("Each chart payload row must be a JSON object.")
-        interval_start = _parse_chart_day(row.get("day"))
+        # The fiber walk can collect adjacent Recharts prop objects that are
+        # not chart data rows; skip anything without a usable 'day' rather
+        # than failing the whole extraction.
+        if not isinstance(row, Mapping) or not row.get("day"):
+            malformed += 1
+            continue
+        try:
+            interval_start = _parse_chart_day(row.get("day"))
+        except ExtractionError:
+            malformed += 1
+            continue
         local_date = interval_start.astimezone(BRISBANE).date()
         if requested_day is not None and local_date != requested_day:
             continue
