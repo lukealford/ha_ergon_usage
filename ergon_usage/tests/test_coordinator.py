@@ -386,7 +386,12 @@ async def test_first_rate_does_not_create_costs_before_boundary(ledger, ergon, h
     await coordinator.run_once("startup")
     cost_calls = [c for c in ha.calls if c.metadata.unit_class is None]
     assert cost_calls
-    assert all(call.metadata.name == f"Ergon {TARIFF} cost" for call in cost_calls)
+    assert all(
+        call.metadata.name == f"Ergon {TARIFF} cost"
+        or call.metadata.name.startswith(f"Ergon {TARIFF} ")
+        and call.metadata.name.endswith(" cost")
+        for call in cost_calls
+    )
     energy_calls = [c for c in ha.calls if c.metadata.unit_class == "energy"]
     assert all(
         call.metadata.name == f"Ergon {TARIFF}"
@@ -394,7 +399,20 @@ async def test_first_rate_does_not_create_costs_before_boundary(ledger, ergon, h
         for call in energy_calls
     )
     boundary = effective_usage_boundary(_rate_observed(ergon.today))
-    assert min(p.start for call in cost_calls for p in call.points) >= boundary
+    # The main tariff cost and ToU window costs must all respect the
+    # non-retroactive boundary (ToU backfill_current_rate is off here).
+    tariff_cost_only = [
+        c for c in cost_calls if c.metadata.name == f"Ergon {TARIFF} cost"
+    ]
+    assert tariff_cost_only
+    assert min(p.start for c in tariff_cost_only for p in c.points) >= boundary
+    tou_cost_calls = [
+        c
+        for c in cost_calls
+        if c.metadata.name != f"Ergon {TARIFF} cost"
+    ]
+    assert tou_cost_calls
+    assert min(p.start for c in tou_cost_calls for p in c.points) >= boundary
 
 
 @pytest.mark.asyncio
@@ -537,13 +555,11 @@ async def test_gap_reporting_surfaces_unpriced_intervals(ledger, ergon, ha):
 @pytest.mark.asyncio
 async def test_checkpoint_only_after_ha_acknowledgement(ledger, ergon, ha):
     coordinator, _ = make_recording_coordinator(FakeSettings(), ledger, ergon, ha)
-    # Rolling publish imports: energy, ToU windows (offpeak/daytime/peak),
-    # then cost.  The failing import must be the first backfill day's
-    # energy import — the 6th import overall (3 rolling ToU + energy +
-    # cost + backfill day energy).  Fail the first backfill day's energy
-    # import by targeting the last energy import in the run instead:
-    # simpler — fail the 6th call.
-    ha.fail_after = 6
+    # Rolling publish imports: energy, ToU windows x2 (usage + cost each),
+    # then tariff cost.  Fail the first backfill day's energy import —
+    # the 9th import overall (energy + 3 ToU + 3 ToU costs + cost +
+    # backfill energy).
+    ha.fail_after = 9
     summary = await coordinator.run_once("startup")
     assert summary.errors
     assert summary.backfill_days_failed == 1

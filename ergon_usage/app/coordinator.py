@@ -28,6 +28,7 @@ from .normalize import BRISBANE, statistic_id
 from .tou import (
     WINDOWS as TOU_WINDOWS,
     split_by_window,
+    tou_cost_points,
     tou_statistic_id,
     tou_statistic_points,
     window_for,
@@ -533,6 +534,7 @@ class Coordinator:
     ) -> None:
         """Publish per-window Tariff 11 statistics (off-peak/daytime/peak).
 
+        Publishes BOTH usage (kWh) and cost ($) statistics per window.
         Only applies to tariffs with a time-of-use split (Tariff 11);
         flat tariffs like Tariff 33 (controlled load) are skipped.
         """
@@ -543,6 +545,27 @@ class Coordinator:
         readings = self._ledger.readings_from(self._account_id, tariff, None)
         if not readings:
             return
+        periods = self._ledger.rate_periods(self._account_id, tariff)
+
+        def rate_for(interval_start: datetime) -> Decimal:
+            period = min(
+                (
+                    p
+                    for p in periods
+                    if p.usage_effective_at <= interval_start
+                ),
+                key=lambda p: p.usage_effective_at,
+                default=None,
+            )
+            if period is None:
+                if self._settings.backfill_current_rate and periods:
+                    period = max(
+                        periods, key=lambda p: p.usage_effective_at
+                    )
+                else:
+                    return Decimal("0")
+            return period.per_kwh_aud
+
         buckets = split_by_window(readings)
         for window in TOU_WINDOWS:
             window_readings = buckets[window]
@@ -570,6 +593,45 @@ class Coordinator:
                     unit_of_measurement="kWh",
                 ),
                 points,
+            )
+
+            cost_points = tou_cost_points(window_readings, rate_for)
+            if not self._settings.backfill_current_rate:
+                # Non-retroactive rule: drop readings priced at 0 (before
+                # the first observed boundary) BEFORE building the
+                # cumulative series, so the sums never include unpriced
+                # history.  Rebuild from the surviving readings only.
+                priced = [
+                    r
+                    for r in window_readings
+                    if rate_for(r.interval_start) > 0
+                ]
+                if priced:
+                    cost_points = tou_cost_points(priced, rate_for)
+                else:
+                    cost_points = []
+            if earliest is not None:
+                cost_points = [p for p in cost_points if p.start >= earliest]
+            if not cost_points:
+                continue
+            logger.info(
+                "ToU costs for %s: %d points to import (statistic %s).",
+                tariff,
+                len(cost_points),
+                tou_statistic_id(self._account_id, tariff, window) + "_cost",
+            )
+            await self._import(
+                errors,
+                StatisticMetadata(
+                    statistic_id=tou_statistic_id(
+                        self._account_id, tariff, window
+                    )
+                    + "_cost",
+                    name=f"Ergon {tariff} {window} cost",
+                    unit_class=None,
+                    unit_of_measurement=None,
+                ),
+                cost_points,
             )
 
     async def _publish_costs(

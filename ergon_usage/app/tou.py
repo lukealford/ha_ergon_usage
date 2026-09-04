@@ -18,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, time
 from decimal import Decimal
-from typing import Sequence
+from typing import Callable, Sequence
 
 from .models import StatisticPoint, UsageReading
 from .normalize import BRISBANE, statistic_id
@@ -93,3 +93,22 @@ def tou_statistic_id(account_id: str, tariff: str, window: str) -> str:
     if window not in WINDOWS:
         raise ValueError(f"Unknown ToU window: {window}")
     return statistic_id(account_id, tariff) + f"_{window}"
+
+
+def tou_cost_points(
+    window_readings: Sequence[UsageReading],
+    rate_for: "Callable[[datetime], Decimal]",
+) -> list[StatisticPoint]:
+    """Build a cumulative cost statistic for one ToU window.
+
+    ``rate_for`` maps an interval start to the $/kWh in effect (the caller
+    applies the same period-selection and backfill rules as the main cost
+    calculation, so window costs are consistent with the tariff total).
+    """
+
+    cumulative = Decimal("0")
+    points: list[StatisticPoint] = []
+    for reading in sorted(window_readings, key=lambda r: r.interval_start):
+        cumulative += reading.kwh * rate_for(reading.interval_start)
+        points.append(StatisticPoint(reading.interval_start, cumulative))
+    return points
