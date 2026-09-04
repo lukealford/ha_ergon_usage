@@ -42,6 +42,13 @@ TARIFF_URL_TEMPLATE = PORTAL_BASE + "/{account}/tariff-metering"
 LOGIN_WAIT_MS = 15_000
 # Bounded wait (ms) for the usage page's XHR data to arrive after load.
 USAGE_XHR_WAIT_MS = 15_000
+# Bounded wait (ms) for the usage chart's bars to render (low-memory hosts
+# render the heavy SPA significantly slower).
+CHART_RENDER_WAIT_MS = 45_000
+# Bounded wait (ms) for SPA content after navigation (rates/usage pages).
+PAGE_LOAD_TIMEOUT_MS = 45_000
+# Settle time (ms) after an interaction (click/reload) before re-checking.
+CLICK_SETTLE_MS = 2_000
 # Generous wait (ms) for a human to solve the AWS WAF challenge in headful
 # mode before the login form appears.
 CHALLENGE_WAIT_MS = 300_000
@@ -248,7 +255,11 @@ class ErgonClient:
             page = await portal.context.new_page()
             try:
                 logger.info("Rates: loading %s", url)
-                await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+                await page.goto(
+                    url,
+                    wait_until="domcontentloaded",
+                    timeout=PAGE_LOAD_TIMEOUT_MS,
+                )
                 logger.info("Rates: page loaded; expanding tariff accordions...")
                 # The live portal renders tariffs as collapsed accordions:
                 # expand every heading naming a tariff before reading the DOM,
@@ -266,8 +277,8 @@ class ErgonClient:
                     if "tariff" not in text.lower():
                         continue
                     try:
-                        await heading.click(timeout=3_000)
-                        await page.wait_for_timeout(1_000)
+                        await heading.click(timeout=PAGE_LOAD_TIMEOUT_MS)
+                        await page.wait_for_timeout(CLICK_SETTLE_MS)
                     except Exception:
                         logger.debug("Tariff accordion click failed: %s", text[:40])
                 html = await page.content()
