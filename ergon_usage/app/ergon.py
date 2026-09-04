@@ -653,7 +653,7 @@ def _resolve_readings(
 
 # Interactive verification: poll interval for the challenge/signin monitor,
 # and the hard timeout after which the session stops itself.
-VERIFY_POLL_SECONDS = 1.0
+VERIFY_POLL_SECONDS = 2.0
 VERIFY_TIMEOUT_SECONDS = 600
 CLICK_SETTLE_MS = 500
 
