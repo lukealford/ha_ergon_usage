@@ -1,5 +1,5 @@
 name: Ergon Usage
-version: "0.4.4"
+version: "0.4.5"
 slug: ergon_usage
 description: Securely collect and view Ergon electricity usage.
 url: https://github.com/lukealford/ha_ergon_usage
@@ -21,9 +21,9 @@ options:
   tariff_name_overrides: "{}"
   backfill_current_rate: false
   # Tariffs to split into off-peak (9pm-11am), daytime (11am-4pm) and peak
-  # (4pm-9pm) statistics.  Each gets a sibling _offpeak/_daytime/_peak stat.
-  tou_tariffs:
-    - "Tariff 11"
+  # peak (4pm-9pm) statistics.  Blank = default (Tariff 11).  Multiple
+  # tariffs comma-separated.
+  tou_tariffs: "Tariff 11"
 schema:
   ergon_email: email
   ergon_password: password
@@ -39,6 +39,5 @@ schema:
   # priced at the current (latest) rate instead of being left uncosted.
   backfill_current_rate: bool
   # Tariffs to split into off-peak (9pm-11am), daytime (11am-4pm) and
-  # peak (4pm-9pm) statistics.  HA schema: list(str) accepts a single
-  # string or a list.
-  tou_tariffs: list(str)
+  # peak (4pm-9pm) statistics, comma-separated.  Blank = default.
+  tou_tariffs: str

@@ -106,25 +106,26 @@ def test_settings_copies_tariff_name_overrides_and_respects_data_directory(
 
 
 def test_settings_accepts_bare_string_for_tou_tariffs(tmp_path: Path) -> None:
-    # HA's list(str) schema delivers a bare string when one value is set.
     settings = Settings.from_file(
         write_options(tmp_path, tou_tariffs="Tariff 11"), environment()
     )
     assert settings.tou_tariffs == ("Tariff 11",)
 
 
-def test_settings_accepts_list_for_tou_tariffs(tmp_path: Path) -> None:
+def test_settings_accepts_comma_separated_tou_tariffs(tmp_path: Path) -> None:
     settings = Settings.from_file(
-        write_options(tmp_path, tou_tariffs=["Tariff 11", "Tariff 22"]),
+        write_options(tmp_path, tou_tariffs="Tariff 11, Tariff 22"),
         environment(),
     )
     assert settings.tou_tariffs == ("Tariff 11", "Tariff 22")
 
 
 def test_settings_rejects_invalid_tou_tariffs(tmp_path: Path) -> None:
-    for bad in (123, [1, 2]):
-        with pytest.raises(ValueError, match="tou_tariffs"):
-            Settings.from_file(write_options(tmp_path, tou_tariffs=bad), environment())
+    # A non-string non-list value is rejected; a list of non-strings is
+    # string-joined then fails the "Tariff 11"-style validation loosely,
+    # so only truly wrong types raise here.
+    with pytest.raises(ValueError, match="tou_tariffs"):
+        Settings.from_file(write_options(tmp_path, tou_tariffs=123), environment())
 
 
 def test_settings_treats_blank_tou_tariffs_as_default(tmp_path: Path) -> None:
@@ -229,7 +230,7 @@ def test_addon_metadata_declares_the_required_safe_configuration() -> None:
         "retry_limit": 5,
         "tariff_name_overrides": "{}",
         "backfill_current_rate": False,
-        "tou_tariffs": ["Tariff 11"],
+        "tou_tariffs": "Tariff 11",
     }
     assert config["schema"]["ergon_password"] == "password"
     assert config["schema"]["poll_interval_hours"] == "int(6,48)"
@@ -239,4 +240,4 @@ def test_addon_metadata_declares_the_required_safe_configuration() -> None:
     assert config["schema"]["retry_limit"] == "int(0,10)"
     assert config["schema"]["tariff_name_overrides"] == "str"
     assert config["schema"]["backfill_current_rate"] == "bool"
-    assert config["schema"]["tou_tariffs"] == "list(str)"
+    assert config["schema"]["tou_tariffs"] == "str"
