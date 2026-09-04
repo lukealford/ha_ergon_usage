@@ -1,5 +1,5 @@
 name: Ergon Usage
-version: "0.1.0"
+version: "0.2.0"
 slug: ergon_usage
 description: Securely collect and view Ergon electricity usage.
 url: https://github.com/lukealford/ha_ergon_usage
