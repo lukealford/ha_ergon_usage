@@ -13,6 +13,10 @@ from typing import Iterator, Sequence
 from .models import CostComponent, RatePeriod, StatisticPoint, TariffRate, UsageReading
 from .normalize import effective_supply_boundary, effective_usage_boundary
 
+# After this many empty fetches a backfill day is marked complete so
+# genuinely-empty days stop being retried every batch.
+EMPTY_DAY_ATTEMPT_LIMIT = 5
+
 
 def _utc_datetime(value: datetime, field_name: str) -> datetime:
     if not isinstance(value, datetime):
@@ -112,6 +116,11 @@ class Ledger:
             CREATE TABLE IF NOT EXISTS backfill_days (
                 day TEXT PRIMARY KEY,
                 completed_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS empty_backfill_attempts (
+                day TEXT PRIMARY KEY,
+                attempts INTEGER NOT NULL,
+                last_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS imports (
                 statistic_id TEXT PRIMARY KEY,
@@ -423,6 +432,35 @@ class Ledger:
                 """,
                 (day.isoformat(), datetime.now(timezone.utc).isoformat()),
             )
+
+    def record_empty_backfill(self, day: date) -> int:
+        """Count one more empty-fetch for a day; return the attempt count.
+
+        An empty backfill fetch is NOT completed: the day stays pending so a
+        later batch retries it (Ergon data lag, or a chart render failure on
+        low-memory hosts).  After EMPTY_DAY_ATTEMPT_LIMIT attempts the day is
+        marked complete to stop endless retries of genuinely empty days.
+        """
+
+        day = _require_day(day, "day")
+        with self._transaction():
+            self._connection.execute(
+                """
+                INSERT INTO empty_backfill_attempts (day, attempts, last_at)
+                VALUES (?, 1, ?)
+                ON CONFLICT(day) DO UPDATE SET
+                    attempts = attempts + 1, last_at = excluded.last_at
+                """,
+                (day.isoformat(), datetime.now(timezone.utc).isoformat()),
+            )
+            row = self._connection.execute(
+                "SELECT attempts FROM empty_backfill_attempts WHERE day = ?",
+                (day.isoformat(),),
+            ).fetchone()
+        attempts = int(row["attempts"])
+        if attempts >= EMPTY_DAY_ATTEMPT_LIMIT:
+            self.complete_backfill(day)
+        return attempts
 
     def status(self) -> StatusSnapshot:
         rows = self._connection.execute(

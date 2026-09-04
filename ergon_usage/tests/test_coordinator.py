@@ -61,6 +61,8 @@ class FakeErgon:
         self.day_failures: dict[date, list] = {}
         self.corrected: dict[tuple[date, int], str] = {}
         self.extra_rate: TariffRate | None = None
+        self.empty_days: set[date] = set()
+        self.empty_days: set[date] = set()
 
     def readings_for(self, day: date) -> list[UsageReading]:
         readings = []
@@ -112,6 +114,10 @@ class FakeErgon:
                 raise ExtractionError()
             failures.pop(0)
             raise failure
+        if day in self.empty_days:
+            # Simulates Ergon data lag or a chart render failure: the page
+            # renders but has no rows for the requested day.
+            return FetchResult(ACCOUNT, (), "chart")
         return FetchResult(ACCOUNT, tuple(self.readings_for(day)), "structured")
 
 
@@ -202,6 +208,72 @@ def backfill_start(ergon: FakeErgon, days: int) -> date:
 
 def local_interval(day: date, hour: int) -> datetime:
     return datetime(day.year, day.month, day.day, hour, tzinfo=BRISBANE).astimezone(UTC)
+
+
+@pytest.mark.asyncio
+async def test_empty_backfill_day_stays_pending_and_retries(ledger, ergon, ha):
+    # An empty backfill day must NOT be checkpointed: it stays pending so a
+    # later batch retries it, until the empty-attempt limit is reached.
+    settings = FakeSettings(initial_history_days=3, backfill_batch_days=30)
+    empty_day = ergon.today - timedelta(days=3)
+    ergon.empty_days = {empty_day}
+    coordinator, _ = make_recording_coordinator(settings, ledger, ergon, ha)
+    await coordinator.run_once("startup")
+    start = backfill_start(ergon, 3)
+    assert empty_day in ledger.pending_backfill(start, ergon.today)
+    assert ledger.status().completed_backfill_days == 2
+
+    # Data published later: the day backfills normally on a retry.
+    ergon.empty_days.clear()
+    await coordinator.run_once("scheduled")
+    assert empty_day not in ledger.pending_backfill(start, ergon.today)
+
+
+@pytest.mark.asyncio
+async def test_empty_backfill_day_completes_after_attempt_limit(ledger, ergon, ha):
+    settings = FakeSettings(initial_history_days=3, backfill_batch_days=30)
+    empty_day = ergon.today - timedelta(days=3)
+    ergon.empty_days = {empty_day}
+    coordinator, _ = make_recording_coordinator(settings, ledger, ergon, ha)
+    for _ in range(5):
+        await coordinator.run_once("scheduled")
+    start = backfill_start(ergon, 3)
+    # Genuinely empty day: stops being retried after the attempt limit.
+    assert empty_day not in ledger.pending_backfill(start, ergon.today)
+    assert ledger.status().completed_backfill_days == 3
+
+
+@pytest.mark.asyncio
+async def test_empty_backfill_day_stays_pending_and_retries(ledger, ergon, ha):
+    # An empty backfill day must NOT be checkpointed: it stays pending so a
+    # later batch retries it, until the empty-attempt limit is reached.
+    settings = FakeSettings(initial_history_days=3, backfill_batch_days=30)
+    empty_day = ergon.today - timedelta(days=3)
+    ergon.empty_days = {empty_day}
+    coordinator, _ = make_recording_coordinator(settings, ledger, ergon, ha)
+    await coordinator.run_once("startup")
+    start = backfill_start(ergon, 3)
+    assert empty_day in ledger.pending_backfill(start, ergon.today)
+    assert ledger.status().completed_backfill_days == 2
+
+    # Data published later: the day backfills normally on a retry.
+    ergon.empty_days.clear()
+    await coordinator.run_once("scheduled")
+    assert empty_day not in ledger.pending_backfill(start, ergon.today)
+
+
+@pytest.mark.asyncio
+async def test_empty_backfill_day_completes_after_attempt_limit(ledger, ergon, ha):
+    settings = FakeSettings(initial_history_days=3, backfill_batch_days=30)
+    empty_day = ergon.today - timedelta(days=3)
+    ergon.empty_days = {empty_day}
+    coordinator, _ = make_recording_coordinator(settings, ledger, ergon, ha)
+    for _ in range(5):
+        await coordinator.run_once("scheduled")
+    start = backfill_start(ergon, 3)
+    # Genuinely empty day: stops being retried after the attempt limit.
+    assert empty_day not in ledger.pending_backfill(start, ergon.today)
+    assert ledger.status().completed_backfill_days == 3
 
 
 @pytest.mark.asyncio

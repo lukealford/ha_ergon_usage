@@ -22,7 +22,7 @@ from .costs import calculate_costs, cost_statistic_points
 from .ergon import ErgonClient, FetchResult
 from .errors import AuthenticationError, ErgonError
 from .home_assistant import HomeAssistantClient, StatisticMetadata
-from .ledger import Ledger
+from .ledger import EMPTY_DAY_ATTEMPT_LIMIT, Ledger
 from .models import StatisticPoint, TariffRate
 from .normalize import BRISBANE, statistic_id
 
@@ -396,6 +396,26 @@ class Coordinator:
             upsert.new,
             upsert.corrected,
         )
+        if not result.readings:
+            # No data for the day: either Ergon has not published it yet or
+            # the chart failed to render.  Do NOT complete the day — record
+            # the empty attempt and leave it pending so a later batch
+            # retries; after the attempt limit it is marked complete.
+            attempts = self._ledger.record_empty_backfill(day)
+            if attempts >= EMPTY_DAY_ATTEMPT_LIMIT:
+                logger.warning(
+                    "Backfill %s: empty after %d attempts; marking complete.",
+                    day.isoformat(),
+                    attempts,
+                )
+            else:
+                logger.info(
+                    "Backfill %s: no data (attempt %d/%d); will retry later.",
+                    day.isoformat(),
+                    attempts,
+                    EMPTY_DAY_ATTEMPT_LIMIT,
+                )
+            return True
         try:
             await self._publish(errors, upsert.earliest_changed)
         except ErgonError:
