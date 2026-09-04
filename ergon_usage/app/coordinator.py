@@ -216,6 +216,7 @@ class Coordinator:
     async def run_once(self, reason: Reason) -> RunSummary:
         """Perform one full synchronization cycle, serialized."""
 
+        logger.info("Sync run starting (reason: %s).", reason)
         async with self._run_lock:
             summary = await self._run(reason)
             self._last_run = summary
@@ -223,6 +224,21 @@ class Coordinator:
                 self._last_error = summary.errors[-1]
             else:
                 self._last_error = None
+            logger.info(
+                "Sync run finished: %d new, %d corrected readings; "
+                "%d rate changes; backfill %d processed, %d failed; "
+                "gaps: %d; errors: %d.",
+                summary.readings_new,
+                summary.readings_corrected,
+                summary.rates_changed,
+                summary.backfill_days_processed,
+                summary.backfill_days_failed,
+                len(summary.gaps),
+                len(summary.errors),
+            )
+            if summary.errors:
+                for error in summary.errors:
+                    logger.warning("Sync error: %s", error)
             return summary
 
     async def serve(self, stop: asyncio.Event) -> None:
@@ -287,10 +303,12 @@ class Coordinator:
         )
 
     async def _fetch_rates(self, errors: list[str]) -> tuple[TariffRate, ...]:
+        logger.info("Fetching tariff rates from the portal...")
         try:
             rates = await self._ergon.fetch_rates()
         except ErgonError as error:
             errors.append(self._sanitize(error))
+            logger.warning("Rate fetch failed: %s", self._sanitize(error))
             return ()
         if rates:
             self._account_id = rates[0].account_id
@@ -298,6 +316,14 @@ class Coordinator:
             for rate in rates:
                 seen.setdefault(rate.tariff, None)
             self._tariffs = tuple(seen)
+            logger.info(
+                "Rates fetched for account %s: %s.",
+                self._account_id,
+                ", ".join(
+                    f"{r.tariff} {r.per_kwh_aud}/kWh"
+                    for r in rates
+                ),
+            )
         return rates
 
     async def _sync_rolling(
@@ -308,9 +334,18 @@ class Coordinator:
             result = await self._ergon.fetch_rolling()
         except ErgonError as error:
             errors.append(self._sanitize(error))
+            logger.warning("Rolling sync failed: %s", self._sanitize(error))
             return None
         self._note_scope(result)
         upsert = self._ledger.upsert_readings(result.readings)
+        logger.info(
+            "Rolling sync (%s): %d readings (%d new, %d corrected, %d unchanged).",
+            result.source,
+            len(result.readings),
+            upsert.new,
+            upsert.corrected,
+            upsert.unchanged,
+        )
         earliest = _earliest(upsert.earliest_changed, rate_boundary)
         await self._publish(errors, earliest)
         return upsert
@@ -320,24 +355,47 @@ class Coordinator:
         start = today - timedelta(days=self._settings.initial_history_days)
         pending = self._ledger.pending_backfill(start, today)
         batch = sorted(pending)[: self._settings.backfill_batch_days]
+        if batch:
+            logger.info(
+                "Backfill: %d days pending, processing oldest %d (%s .. %s).",
+                len(pending),
+                len(batch),
+                batch[0].isoformat(),
+                batch[-1].isoformat(),
+            )
+        else:
+            logger.info("Backfill: no pending days.")
         processed = 0
         failed = 0
         for day in batch:
             if not await self._process_backfill_day(day, errors):
                 failed += 1
+                logger.warning(
+                    "Backfill day %s failed; stopping the remaining batch.",
+                    day.isoformat(),
+                )
                 break  # stop the remaining batch after a failure
             processed += 1
+            logger.info("Backfill day %s complete.", day.isoformat())
         return processed, failed
 
     async def _process_backfill_day(self, day: date, errors: list[str]) -> bool:
         # Rates and the rolling window already loaded pages; every Ergon page
         # load is preceded by the configured inter-request delay.
         await self._inter_request_delay()
+        logger.info("Backfill: fetching %s...", day.isoformat())
         result = await self._fetch_day(day, errors)
         if result is None:
             return False
         self._note_scope(result)
         upsert = self._ledger.upsert_readings(result.readings)
+        logger.info(
+            "Backfill %s: %d readings (%d new, %d corrected).",
+            day.isoformat(),
+            len(result.readings),
+            upsert.new,
+            upsert.corrected,
+        )
         try:
             await self._publish(errors, upsert.earliest_changed)
         except ErgonError:
@@ -367,6 +425,10 @@ class Coordinator:
 
         if self._account_id is None:
             return
+        logger.info(
+            "Publishing statistics to Home Assistant (from %s)...",
+            earliest.isoformat() if earliest else "beginning",
+        )
         for tariff in self._tariffs:
             energy_points = self._ledger.points_from(self._account_id, tariff, earliest)
             if energy_points:
