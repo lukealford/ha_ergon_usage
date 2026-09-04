@@ -340,9 +340,31 @@ class ErgonClient:
                     )
                 except Exception:  # noqa: BLE001
                     chart_shape_count = -1
-                if not chart_rows and chart_shape_count:
-                    # Self-describing failure: dump the FIRST shape's React
-                    # key names and its prop keys (names only — no values).
+                if not chart_rows:
+                    # Zero shapes: dump page identity + top-level text so the
+                    # failure is diagnosable (login wall? error page? empty
+                    # account? wrong day?).  Truncated, values are page text.
+                    try:
+                        debug = await page.evaluate(
+                            """() => ({
+                                url: location.href.slice(0, 120),
+                                title: document.title.slice(0, 80),
+                                headings: [...document.querySelectorAll('h1,h2,h3')]
+                                    .slice(0, 6)
+                                    .map(h => (h.textContent || '').trim().slice(0, 60)),
+                                bodyPreview: (document.body.innerText || '')
+                                    .replace(/\\s+/g, ' ').slice(0, 300),
+                            })"""
+                        )
+                        logger.info(
+                            "Usage page rendered with no chart. Page state: %s",
+                            json.dumps(debug)[:1000],
+                        )
+                    except Exception:  # noqa: BLE001
+                        logger.info(
+                            "Usage page rendered with no chart; page dump failed."
+                        )
+                elif not chart_rows and chart_shape_count:
                     debug = await page.evaluate(
                         """() => {
                             const shape = document.querySelector(
