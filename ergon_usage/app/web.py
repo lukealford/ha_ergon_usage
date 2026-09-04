@@ -198,6 +198,14 @@ def render_verify_page() -> str:
         "<button type=\"button\" id=\"reload\">Reload page</button> "
         "<form method=\"post\" action=\"./api/verify/stop\" style=\"display:inline\">"
         "<button type=\"submit\">Stop</button></form></p>"
+        "<div id=\"loginform\" style=\"display:none\">"
+        "<h2>Sign in</h2>"
+        "<p>Enter your Ergon portal credentials to submit the sign-in form "
+        "in the streamed browser. They are sent only to the Ergon portal.</p>"
+        "<label>Email <input type=\"email\" id=\"login-email\"></label><br>"
+        "<label>Password <input type=\"password\" id=\"login-password\"></label><br>"
+        "<button type=\"button\" id=\"login-submit\">Submit sign-in</button>"
+        "</div>"
         "<script>"
         "const VIEW_W = 1280, VIEW_H = 800;"
         "async function refreshState() {"
@@ -205,8 +213,8 @@ def render_verify_page() -> str:
         "    const r = await fetch('./api/verify/state', {cache: 'no-store'});"
         "    const s = await r.json();"
         "    document.getElementById('state').textContent ="
-        "      'Status: ' + s.status + (s.error ? ' — ' + s.error : '');"
-        "    if (s.status === 'done') {"
+        "      'Status: ' + s.status + (s.error ? ' — ' + s.error : '');"        "    document.getElementById('loginform').style.display ="
+        "      (s.status === 'signin') ? 'block' : 'none';"        "    if (s.status === 'done') {"
         "      document.getElementById('shot').src = '';"
         "      return;"
         "    }"
@@ -245,6 +253,17 @@ def render_verify_page() -> str:
         "});"
         "document.getElementById('start').addEventListener('click', async () => {"
         "  try { await fetch('./api/verify/start', {method: 'POST'}); } catch (e) {}"
+        "  refreshState(); refreshShot();"
+        "});"
+        "document.getElementById('login-submit').addEventListener('click', async () => {"
+        "  const email = document.getElementById('login-email').value;"
+        "  const password = document.getElementById('login-password').value;"
+        "  try {"
+        "    await fetch('./api/verify/login', {method: 'POST',"
+        "      headers: {'Content-Type': 'application/json'},"
+        "      body: JSON.stringify({email: email, password: password})});"
+        "    document.getElementById('login-password').value = '';"
+        "  } catch (e) {}"
         "  refreshState(); refreshShot();"
         "});"
         "refreshState(); refreshShot();"
@@ -327,6 +346,19 @@ def create_app(coordinator: Any, verification: Any = None) -> web.Application:
     async def verify_begin(request: web.Request) -> web.Response:
         return _no_store(web.json_response(await verification.click_begin()))
 
+    async def verify_login(request: web.Request) -> web.Response:
+        try:
+            payload = await request.json()
+            email = payload["email"]
+            password = payload["password"]
+        except Exception:  # noqa: BLE001 - malformed bodies rejected uniformly
+            return _no_store(web.json_response({"error": "invalid"}, status=400))
+        if not isinstance(email, str) or not email or not isinstance(password, str) or not password:
+            return _no_store(web.json_response({"error": "invalid"}, status=400))
+        result = await verification.fill_login(email, password)
+        # The password is never echoed back in any response or log.
+        return _no_store(web.json_response(result))
+
     async def verify_start(request: web.Request) -> web.Response:
         state = await verification.start()
         return _no_store(web.json_response(state))
@@ -346,6 +378,7 @@ def create_app(coordinator: Any, verification: Any = None) -> web.Application:
         app.router.add_post("/api/verify/click", verify_click)
         app.router.add_post("/api/verify/reload", verify_reload)
         app.router.add_post("/api/verify/begin", verify_begin)
+        app.router.add_post("/api/verify/login", verify_login)
         app.router.add_post("/api/verify/start", verify_start)
         app.router.add_post("/api/verify/stop", verify_stop)
     return app
