@@ -120,6 +120,11 @@ class FakeCoordinator:
         self.resets.append(days)
         return days
 
+    def republish(self) -> bool:
+        self.republishes: list[bool] = getattr(self, "republishes", [])
+        self.republishes.append(True)
+        return True
+
 
 @pytest.fixture
 def coordinator():
@@ -244,6 +249,15 @@ async def test_reset_backfill_rejects_invalid_days(aiohttp_client_factory, coord
         assert response.status == 400
     response = await client.get("/api/reset-backfill")
     assert response.status == 405
+
+
+@pytest.mark.asyncio
+async def test_republish_triggers_run(aiohttp_client_factory, coordinator):
+    client = await aiohttp_client_factory(create_app(coordinator))
+    response = await client.post("/api/republish")
+    assert response.status == 202
+    assert (await response.json()) == {"accepted": True}
+    assert coordinator.republishes == [True]
 
 
 @pytest.mark.asyncio

@@ -384,8 +384,14 @@ def render_index(payload: dict[str, Any]) -> str:
         '<button type="button" id="reset-backfill" class="secondary">Reset backfill</button>'
         "</div>"
         '<p class="muted" style="font-size:12px;margin:6px 0 0">Re-fetches the '
-        "last N days of usage. Existing readings, rates, and statistics are "
-        "kept.</p>"
+        "last N days of usage from the portal. Existing readings, rates, and "
+        "statistics are kept.</p>"
+        '<div class="toolbar" style="margin-top:4px">'
+        '<button type="button" id="republish">Republish to HA</button>'
+        "</div>"
+        '<p class="muted" style="font-size:12px;margin:6px 0 0">No portal visit: '
+        "recalculates every statistic from data already stored here and "
+        "re-imports the full history into Home Assistant.</p>"
         "</details>"
         "</div></div>"
         + '<div class="grid" style="margin-top:12px">'
@@ -453,6 +459,13 @@ def render_index(payload: dict[str, Any]) -> str:
         "    }"
         "  } catch (e) {}"
         "  btn.disabled = false; btn.textContent = 'Reset backfill';"
+        "});"
+        "document.getElementById('republish').addEventListener('click', async () => {"
+        "  const btn = document.getElementById('republish');"
+        "  btn.disabled = true; btn.textContent = 'Publishing…';"
+        "  try { await fetch('./api/republish', {method: 'POST'}); } catch (e) {}"
+        "  setRunning(true); pollPhase();"
+        "  btn.disabled = false; btn.textContent = 'Republish to HA';"
         "});"
         "</script>"
     )
@@ -596,6 +609,12 @@ def create_app(coordinator: Any, verification: Any = None) -> web.Application:
         coordinator.run_now("manual")
         return _no_store(web.json_response({"cleared": cleared}))
 
+    async def republish(request: web.Request) -> web.Response:
+        accepted = coordinator.republish()
+        return _no_store(
+            web.json_response({"accepted": accepted}, status=202)
+        )
+
     async def index(request: web.Request) -> web.Response:
         payload = build_status_payload(coordinator.snapshot())
         return _no_store(
@@ -672,6 +691,7 @@ def create_app(coordinator: Any, verification: Any = None) -> web.Application:
     app.router.add_get("/api/status", status)
     app.router.add_post("/api/run", run_now)
     app.router.add_post("/api/reset-backfill", reset_backfill)
+    app.router.add_post("/api/republish", republish)
     app.router.add_get("/health", health)
     if verification is not None:
         app.router.add_get("/verify", verify_page)

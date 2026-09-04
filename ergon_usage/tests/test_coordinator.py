@@ -277,6 +277,28 @@ async def test_empty_backfill_day_completes_after_attempt_limit(ledger, ergon, h
 
 
 @pytest.mark.asyncio
+async def test_republish_imports_all_without_portal_calls(ledger, ergon, ha):
+    # Seed the ledger with a normal run, then wipe the HA import state.
+    coordinator, _ = make_recording_coordinator(FakeSettings(), ledger, ergon, ha)
+    await coordinator.run_once("startup")
+    calls_before = len(ergon.calls)
+    ha.calls.clear()
+
+    # Republish: full re-import purely from stored data.
+    assert coordinator.republish() is True
+    assert coordinator._run_task is not None
+    await coordinator._run_task
+    assert len(ergon.calls) == calls_before  # no portal activity
+    assert ha.calls, "expected statistics re-imported"
+    energy_calls = [c for c in ha.calls if c.metadata.unit_class == "energy"]
+    assert energy_calls
+    # The full history is re-imported (first point is the earliest reading).
+    assert min(p.start for c in energy_calls for p in c.points) == local_interval(
+        ergon.today - timedelta(days=3), 0
+    )
+
+
+@pytest.mark.asyncio
 async def test_backfill_runs_oldest_first_batch_and_checkpoints(ledger, ergon, ha):
     settings = FakeSettings(initial_history_days=365)
     coordinator, _ = make_recording_coordinator(settings, ledger, ergon, ha)

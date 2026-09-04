@@ -28,7 +28,7 @@ from .normalize import BRISBANE, statistic_id
 
 logger = logging.getLogger(__name__)
 
-Reason = Literal["startup", "scheduled", "manual"]
+Reason = Literal["startup", "scheduled", "manual", "republish"]
 
 MAX_BACKOFF_SECONDS = 300
 STARTUP_JITTER_MIN_SECONDS = 5
@@ -280,6 +280,22 @@ class Coordinator:
         errors: list[str] = []
         rate_boundary: datetime | None = None
 
+        if reason == "republish":
+            # No portal access at all: recompute from the ledger (which
+            # already holds every fetched reading and rate) and re-import
+            # the complete history to Home Assistant.
+            await self._publish(errors, None)
+            return RunSummary(
+                reason=reason,
+                rates_changed=0,
+                readings_new=0,
+                readings_corrected=0,
+                backfill_days_processed=0,
+                backfill_days_failed=0,
+                errors=tuple(errors),
+                gaps=self._report_gaps(),
+            )
+
         rates = await self._fetch_rates(errors)
         rate_result = None
         if rates:
@@ -365,6 +381,17 @@ class Coordinator:
             today.isoformat(),
         )
         return cleared
+
+    def republish(self) -> bool:
+        """Re-import ALL stored statistics to Home Assistant, no scraping.
+
+        Recomputes energy and cost points from the ledger (which already
+        holds every fetched reading and rate) and imports the complete
+        history.  Use after fixing Energy Dashboard config or when HA's
+        statistics look wrong.  Returns True when a run was started.
+        """
+
+        return self.run_now("republish")[0]
 
     async def _backfill_batch(self, errors: list[str]) -> tuple[int, int]:
         today = self._today_brisbane()
