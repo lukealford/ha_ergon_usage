@@ -233,7 +233,12 @@ def _format_ts(value: Any) -> str:
         )
     except ValueError:
         return html.escape(str(value))
-    return moment.strftime("%d %b %Y, %H:%M")
+    now = datetime.now(ZoneInfo("Australia/Brisbane"))
+    if moment.date() == now.date():
+        return moment.strftime("Today %H:%M")
+    if moment.year != now.year:
+        return moment.strftime("%b %Y")
+    return moment.strftime("%d %b, %H:%M")
 
 
 def _rate_row(tariff: str, rate: dict[str, Any]) -> str:
