@@ -382,51 +382,17 @@ class ErgonClient:
                 except Exception:  # noqa: BLE001
                     chart_shape_count = -1
                 if not chart_rows:
-                    # Zero shapes: dump page identity + top-level text so the
-                    # failure is diagnosable (login wall? error page? empty
-                    # account? wrong day?).  Truncated, values are page text.
-                    try:
-                        debug = await page.evaluate(
-                            """() => ({
-                                url: location.href.slice(0, 120),
-                                title: document.title.slice(0, 80),
-                                headings: [...document.querySelectorAll('h1,h2,h3')]
-                                    .slice(0, 6)
-                                    .map(h => (h.textContent || '').trim().slice(0, 60)),
-                                bodyPreview: (document.body.innerText || '')
-                                    .replace(/\\s+/g, ' ').slice(0, 300),
-                            })"""
-                        )
-                        logger.info(
-                            "Usage page rendered with no chart. Page state: %s",
-                            json.dumps(debug)[:1000],
-                        )
-                    except Exception:  # noqa: BLE001
-                        logger.info(
-                            "Usage page rendered with no chart; page dump failed."
-                        )
-                elif not chart_rows and chart_shape_count:
-                    debug = await page.evaluate(
-                        """() => {
-                            const shape = document.querySelector(
-                                '.recharts-bar-rectangle path, .recharts-bar-rectangle rect');
-                            if (!shape) return {noShape: true};
-                            const out = {keys: Object.keys(shape).map(k => k.slice(0, 24))};
-                            for (const k of Object.keys(shape)) {
-                                if (!k.startsWith('__react')) continue;
-                                let node = shape[k];
-                                const hops = [];
-                                for (let hop = 0; hop < 8 && node; hop++) {
-                                    const props = node.memoizedProps || node.pendingProps;
-                                    hops.push(props ? Object.keys(props).slice(0, 12) : null);
-                                    node = node.return || node.alternate || null;
-                                }
-                                out[k.slice(0, 20)] = hops;
-                            }
-                            return out;
-                        }"""
+                    # Zero shapes after reload: either a genuinely empty day
+                    # (Ergon hasn't published data yet — a normal condition
+                    # for recent days) or a render failure.  Both surface as
+                    # an empty reading set; the coordinator treats an empty
+                    # backfill day as complete rather than failed, and the
+                    # rolling sync will pick data up when it appears.
+                    logger.info(
+                        "Usage page for %s rendered with no chart data "
+                        "(likely an unpublished/empty day).",
+                        day.isoformat() if day else "rolling window",
                     )
-                    logger.info("Chart debug: %s", json.dumps(debug)[:800])
             finally:
                 await page.close()
         return _resolve_readings(
@@ -687,7 +653,13 @@ def _resolve_readings(
     chart_shape_count: int,
     day: date | None,
 ) -> FetchResult:
-    """Prefer structured payload, then Recharts rows, then DOM extraction."""
+    """Prefer structured payload, then Recharts rows, then DOM extraction.
+
+    A chart page that rendered but held no rows for the requested day is an
+    EMPTY DAY (Ergon has not published data yet), not a failure: it returns
+    an empty reading set with source ``"chart"`` so the coordinator can
+    checkpoint the day and pick data up on a later sync.
+    """
 
     try:
         readings = select_usage_payload(candidates, account_id, day)
@@ -696,14 +668,14 @@ def _resolve_readings(
         try:
             readings = extract_chart_payloads(chart_rows, account_id, day)
             source = "chart"
-        except ExtractionError as error:
-            if chart_rows:
-                # The chart was read (rows exist) but its data did not match
-                # the request.  DOM cannot do better on a chart page; raise
-                # the chart error so its span diagnostic is visible.
-                raise ExtractionError(
-                    f"{error.safe_message} (chart shapes on page: {chart_shape_count})"
-                ) from None
+        except ExtractionError:
+            # An empty/unpublished day on an otherwise healthy page (the
+            # caller logged the page state).  Only applies to a specific
+            # requested day: the rolling window still falls back to DOM.
+            # Return empty rather than raising so backfill days checkpoint
+            # normally and the batch continues.
+            if day is not None and chart_shape_count == 0:
+                return FetchResult(account_id=account_id, readings=(), source="chart")
             try:
                 readings = extract_dom(html, account_id, day)
                 source = "dom"

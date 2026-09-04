@@ -412,10 +412,36 @@ class TestFetchRolling:
         assert result.readings[0].tariff == "Tariff 11"
 
     @pytest.mark.asyncio
+    async def test_empty_chart_backfill_day_returns_empty_result(self, monkeypatch):
+        # Ergon has not published data yet for the requested day: chart
+        # shapes 0, no rows, no structured payload.  A specific-day fetch
+        # must return an empty FetchResult, not raise, so the backfill
+        # batch can checkpoint the day and move on.
+        scenario = Scenario()
+        scenario.usage_responses = [
+            usage_json_response(payload={"series": [{"name": "Tariff 11", "data": []}]})
+        ]
+        scenario.page_html = "<p>dashboard with no chart</p>"
+
+        async def evaluate(self: FakePage, script: str) -> object:
+            self.evaluate_calls.append(script)
+            if "recharts-bar-rectangle" in script and "__react" not in script:
+                return 0
+            return []
+
+        monkeypatch.setattr(FakePage, "evaluate", evaluate)
+        client = make_client(scenario)
+        result = await client.fetch_day(date.today())
+        assert result.source == "chart"
+        assert result.readings == ()
+
+    @pytest.mark.asyncio
     async def test_extraction_failure_raises_when_nothing_extracts(self):
         scenario = Scenario()
         scenario.usage_responses = [usage_json_response(payload={"series": []})]
         scenario.page_html = "<p>nothing useful</p>"
+        # Not an empty chart day: this is a rolling fetch (day=None), so
+        # nothing extracts and the client must still raise.
         with pytest.raises(ExtractionError) as error:
             await make_client(scenario).fetch_rolling()
         assert error.value.retryable is True
@@ -494,11 +520,21 @@ class TestFetchDay:
         assert result.source == "structured"
 
     @pytest.mark.asyncio
-    async def test_fetch_day_rejects_readings_outside_requested_day(self):
+    async def test_fetch_day_rejects_readings_outside_requested_day(self, monkeypatch):
         scenario = Scenario()
         # The sanitized fixture holds 31 Aug 2026 readings only; requesting a
-        # different day yields nothing, which is an extraction failure.
+        # different day yields nothing.  This is a real published day being
+        # excluded (chart shapes present), not an empty day, so it still
+        # raises an extraction failure.
         scenario.usage_responses = [usage_json_response()]
+
+        async def evaluate(self: FakePage, script: str) -> object:
+            self.evaluate_calls.append(script)
+            if "recharts-bar-rectangle" in script and "__react" not in script:
+                return 6  # chart shapes present: data exists, just not for the day
+            return []
+
+        monkeypatch.setattr(FakePage, "evaluate", evaluate)
         with pytest.raises(ExtractionError):
             await make_client(scenario).fetch_day(date(2026, 9, 1))
 
