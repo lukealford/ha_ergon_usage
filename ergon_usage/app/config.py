@@ -23,6 +23,7 @@ _DEFAULTS = {
     "retry_limit": 5,
     "tariff_name_overrides": {},
     "backfill_current_rate": False,
+    "tou_tariffs": ["Tariff 11"],
 }
 
 
@@ -38,6 +39,7 @@ class Settings:
     retry_limit: int
     tariff_name_overrides: Mapping[str, str]
     backfill_current_rate: bool
+    tou_tariffs: tuple[str, ...]
     data_dir: Path
 
     @classmethod
@@ -80,6 +82,12 @@ class Settings:
         if not isinstance(backfill_current_rate, bool):
             raise ValueError("backfill_current_rate must be a boolean.")
 
+        tou_tariffs = values["tou_tariffs"]
+        if not isinstance(tou_tariffs, list) or not all(
+            isinstance(item, str) and item.strip() for item in tou_tariffs
+        ):
+            raise ValueError("tou_tariffs must be a list of non-empty strings.")
+
         return cls(
             ergon_email=email,
             ergon_password=password,
@@ -91,6 +99,7 @@ class Settings:
             retry_limit=values["retry_limit"],
             tariff_name_overrides=MappingProxyType(dict(overrides)),
             backfill_current_rate=backfill_current_rate,
+            tou_tariffs=tuple(tou_tariffs),
             data_dir=Path(environ.get("ERGON_DATA_DIR", "/data")),
         )
 

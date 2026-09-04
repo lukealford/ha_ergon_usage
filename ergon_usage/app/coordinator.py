@@ -25,6 +25,13 @@ from .home_assistant import HomeAssistantClient, StatisticMetadata
 from .ledger import EMPTY_DAY_ATTEMPT_LIMIT, Ledger
 from .models import StatisticPoint, TariffRate
 from .normalize import BRISBANE, statistic_id
+from .tou import (
+    WINDOWS as TOU_WINDOWS,
+    split_by_window,
+    tou_statistic_id,
+    tou_statistic_points,
+    window_for,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -505,7 +512,46 @@ class Coordinator:
                     ),
                     energy_points,
                 )
+            await self._publish_tou(errors, tariff, earliest)
             await self._publish_costs(errors, tariff, earliest)
+
+    async def _publish_tou(
+        self, errors: list[str], tariff: str, earliest: datetime | None
+    ) -> None:
+        """Publish per-window Tariff 11 statistics (off-peak/daytime/peak).
+
+        Only applies to tariffs with a time-of-use split (Tariff 11);
+        flat tariffs like Tariff 33 (controlled load) are skipped.
+        """
+
+        if tariff not in self._settings.tou_tariffs:
+            return
+        assert self._account_id is not None
+        readings = self._ledger.readings_from(self._account_id, tariff, None)
+        if not readings:
+            return
+        buckets = split_by_window(readings)
+        for window in TOU_WINDOWS:
+            window_readings = buckets[window]
+            if not window_readings:
+                continue
+            points = tou_statistic_points(window_readings)
+            if earliest is not None:
+                points = [p for p in points if p.start >= earliest]
+            if not points:
+                continue
+            await self._import(
+                errors,
+                StatisticMetadata(
+                    statistic_id=tou_statistic_id(
+                        self._account_id, tariff, window
+                    ),
+                    name=f"Ergon {tariff} {window}",
+                    unit_class="energy",
+                    unit_of_measurement="kWh",
+                ),
+                points,
+            )
 
     async def _publish_costs(
         self, errors: list[str], tariff: str, earliest: datetime | None
