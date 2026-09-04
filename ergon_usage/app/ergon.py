@@ -353,6 +353,27 @@ class ErgonClient:
                 chart_rows = await _read_chart_payloads(page)
                 if chart_rows:
                     logger.info("Chart payload read: %d rows.", len(chart_rows))
+                else:
+                    # The SPA sometimes skips rendering the chart on a
+                    # same-URL client-side navigation.  A full reload forces
+                    # a fresh server-side render; retry once.
+                    logger.info("No chart rendered; reloading the page once...")
+                    await page.reload(
+                        wait_until="domcontentloaded", timeout=PAGE_LOAD_TIMEOUT_MS
+                    )
+                    try:
+                        await page.wait_for_selector(
+                            ".recharts-bar-rectangle", timeout=CHART_RENDER_WAIT_MS
+                        )
+                        await page.wait_for_timeout(1_000)
+                        chart_rows = await _read_chart_payloads(page)
+                        if chart_rows:
+                            logger.info(
+                                "Chart payload read after reload: %d rows.",
+                                len(chart_rows),
+                            )
+                    except Exception:  # noqa: BLE001 - not a chart page
+                        pass
                 try:
                     chart_shape_count = await page.evaluate(
                         "document.querySelectorAll('.recharts-bar-rectangle path,"

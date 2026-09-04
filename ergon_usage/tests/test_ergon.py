@@ -210,6 +210,9 @@ class FakePage:
     async def wait_for_timeout(self, _ms: int) -> None:
         return
 
+    async def reload(self, **_kwargs) -> None:
+        return
+
     async def evaluate(self, script: str) -> object:
         """Default to no chart payloads so chart extraction is a no-op."""
 
