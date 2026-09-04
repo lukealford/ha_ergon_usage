@@ -291,6 +291,14 @@ class Coordinator:
             # No portal access at all: recompute from the ledger (which
             # already holds every fetched reading and rate) and re-import
             # the complete history to Home Assistant.
+            # self._tariffs is only populated by portal fetches; a fresh
+            # process has it empty, so recover the tariff list from the
+            # ledger instead of silently importing nothing.
+            if not self._tariffs and self._account_id is not None:
+                self._tariffs = self._ledger.distinct_tariffs(self._account_id)
+                logger.info(
+                    "Republish: tariffs from ledger: %s.", ", ".join(self._tariffs)
+                )
             await self._publish(errors, None)
             return RunSummary(
                 reason=reason,
@@ -540,6 +548,12 @@ class Coordinator:
                 points = [p for p in points if p.start >= earliest]
             if not points:
                 continue
+            logger.info(
+                "ToU for %s: %d points to import (statistic %s).",
+                tariff,
+                len(points),
+                tou_statistic_id(self._account_id, tariff, window),
+            )
             await self._import(
                 errors,
                 StatisticMetadata(

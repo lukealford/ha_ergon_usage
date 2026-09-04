@@ -285,6 +285,9 @@ async def test_republish_imports_all_without_portal_calls(ledger, ergon, ha):
     calls_before = len(ergon.calls)
     ha.calls.clear()
 
+    # Simulate a fresh process: tariff list discovered by fetches is gone.
+    coordinator._tariffs = ()
+
     # Republish: full re-import purely from stored data.
     assert coordinator.republish() is True
     assert coordinator._run_task is not None
@@ -296,6 +299,40 @@ async def test_republish_imports_all_without_portal_calls(ledger, ergon, ha):
     # The full history is re-imported (first point is the earliest reading).
     assert min(p.start for c in energy_calls for p in c.points) == local_interval(
         ergon.today - timedelta(days=3), 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_republish_creates_tou_statistics(ledger, ergon, ha):
+    coordinator, _ = make_recording_coordinator(FakeSettings(), ledger, ergon, ha)
+    await coordinator.run_once("startup")
+    ha.calls.clear()
+    coordinator._tariffs = ()
+    assert coordinator.republish() is True
+    assert coordinator._run_task is not None
+    await coordinator._run_task
+    tou_names = {
+        c.metadata.name
+        for c in ha.calls
+        if c.metadata.unit_class == "energy"
+    }
+    assert tou_names == {
+        f"Ergon {TARIFF}",
+        f"Ergon {TARIFF} offpeak",
+        f"Ergon {TARIFF} daytime",
+        f"Ergon {TARIFF} peak",
+    }
+    # The three windows' first points together cover all hours: the sums
+    # of the last points across windows equal the single tariff's total.
+    def last_sum(name: str) -> Decimal:
+        calls = [c for c in ha.calls if c.metadata.name == name]
+        return calls[-1].points[-1].sum
+
+    assert (
+        last_sum(f"Ergon {TARIFF} offpeak")
+        + last_sum(f"Ergon {TARIFF} daytime")
+        + last_sum(f"Ergon {TARIFF} peak")
+        == last_sum(f"Ergon {TARIFF}")
     )
 
 

@@ -313,6 +313,20 @@ class Ledger:
             for row in rows
         ]
 
+    def distinct_tariffs(self, account_id: str) -> tuple[str, ...]:
+        """Return every tariff with stored readings for an account."""
+
+        account_id = _require_text(account_id, "account_id")
+        rows = self._connection.execute(
+            """
+            SELECT DISTINCT tariff FROM readings
+            WHERE account_id = ?
+            ORDER BY tariff
+            """,
+            (account_id,),
+        ).fetchall()
+        return tuple(str(row["tariff"]) for row in rows)
+
     def cost_components_from(
         self, account_id: str, tariff: str, earliest: datetime | None
     ) -> list[CostComponent]:
