@@ -759,7 +759,12 @@ class VerificationSession:
             if await self.page.locator(_ACCOUNT_LINK).count() > 0:
                 self._saw_account_link = True
                 await self._finish_success()
-            elif await self.page.locator("input").count() > 0:
+                return
+            # Only a VISIBLE login field means "signin": challenge pages
+            # embed hidden inputs (WAF token fields) that would otherwise
+            # be misclassified.
+            login_selector = ", ".join(EMAIL_SELECTORS)
+            if await self.page.locator(login_selector).count() > 0:
                 self._status = "signin"
             else:
                 self._status = "challenge"
