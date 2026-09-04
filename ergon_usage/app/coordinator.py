@@ -350,6 +350,22 @@ class Coordinator:
         await self._publish(errors, earliest)
         return upsert
 
+    def reset_backfill(self, days: int) -> int:
+        """Clear backfill completion markers for the last ``days`` days."""
+
+        if not isinstance(days, int) or isinstance(days, bool) or days < 1:
+            raise ValueError("days must be a positive integer.")
+        today = self._today_brisbane()
+        start = today - timedelta(days=days)
+        cleared = self._ledger.reset_backfill(start, today)
+        logger.info(
+            "Backfill reset: cleared %d day markers (%s .. %s).",
+            cleared,
+            start.isoformat(),
+            today.isoformat(),
+        )
+        return cleared
+
     async def _backfill_batch(self, errors: list[str]) -> tuple[int, int]:
         today = self._today_brisbane()
         start = today - timedelta(days=self._settings.initial_history_days)

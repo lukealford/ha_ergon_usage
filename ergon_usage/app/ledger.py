@@ -462,6 +462,36 @@ class Ledger:
             self.complete_backfill(day)
         return attempts
 
+    def reset_backfill(self, start: date, end: date) -> int:
+        """Clear backfill completion markers (and empty attempts) in a range.
+
+        Readings, rates, costs, and import checkpoints are untouched: only
+        the 'this day is done' bookkeeping is cleared, so the next runs
+        re-fetch those days.  Returns the number of days cleared.
+        """
+
+        start = _require_day(start, "start")
+        end = _require_day(end, "end")
+        if end < start:
+            raise ValueError("end must not precede start.")
+        with self._transaction():
+            cursor = self._connection.execute(
+                """
+                DELETE FROM backfill_days
+                WHERE day >= ? AND day < ?
+                """,
+                (start.isoformat(), end.isoformat()),
+            )
+            cleared = cursor.rowcount
+            self._connection.execute(
+                """
+                DELETE FROM empty_backfill_attempts
+                WHERE day >= ? AND day < ?
+                """,
+                (start.isoformat(), end.isoformat()),
+            )
+        return cleared
+
     def status(self) -> StatusSnapshot:
         rows = self._connection.execute(
             "SELECT statistic_id, through_timestamp FROM imports ORDER BY statistic_id"

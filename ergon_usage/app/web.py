@@ -374,6 +374,19 @@ def render_index(payload: dict[str, Any]) -> str:
         '<span id="run-note" class="muted" role="status"></span>'
         '<a href="./verify"><button type="button" class="secondary">'
         "WAF verification</button></a>"
+        '<details style="margin-left:auto">'
+        '<summary class="muted" style="cursor:pointer;font-size:12px">Maintenance</summary>'
+        '<div class="toolbar" style="margin-top:8px">'
+        '<input type="number" id="reset-days" min="1" max="730" value="14" '
+        'style="width:80px;padding:8px;border:1px solid var(--divider-color);'
+        'border-radius:8px;background:var(--card-background-color);'
+        'color:var(--primary-text-color)">'
+        '<button type="button" id="reset-backfill" class="secondary">Reset backfill</button>'
+        "</div>"
+        '<p class="muted" style="font-size:12px;margin:6px 0 0">Re-fetches the '
+        "last N days of usage. Existing readings, rates, and statistics are "
+        "kept.</p>"
+        "</details>"
         "</div></div>"
         + '<div class="grid" style="margin-top:12px">'
         + _render_rates(payload)
@@ -422,6 +435,25 @@ def render_index(payload: dict[str, Any]) -> str:
         "    }"
         "  } catch (e) {}"
         "})();"
+        "document.getElementById('reset-backfill').addEventListener('click', async () => {"
+        "  const btn = document.getElementById('reset-backfill');"
+        "  const days = parseInt(document.getElementById('reset-days').value, 10);"
+        "  if (!days || days < 1 || days > 730) return;"
+        "  if (!confirm('Re-fetch the last ' + days + ' days of usage?')) return;"
+        "  btn.disabled = true; btn.textContent = 'Resetting…';"
+        "  try {"
+        "    const r = await fetch('./api/reset-backfill', {method: 'POST',"
+        "      headers: {'Content-Type': 'application/json'},"
+        "      body: JSON.stringify({days: days})});"
+        "    const s = await r.json();"
+        "    if (typeof s.cleared === 'number') {"
+        "      runNote.textContent = 'Cleared ' + s.cleared + ' day(s); triggering re-fetch';"
+        "      await fetch('./api/run', {method: 'POST'});"
+        "      setRunning(true); pollPhase();"
+        "    }"
+        "  } catch (e) {}"
+        "  btn.disabled = false; btn.textContent = 'Reset backfill';"
+        "});"
         "</script>"
     )
     return _page("Ergon Usage", body)
@@ -550,6 +582,20 @@ def create_app(coordinator: Any, verification: Any = None) -> web.Application:
             web.json_response({"accepted": accepted, "coalesced": coalesced}, status=202)
         )
 
+    async def reset_backfill(request: web.Request) -> web.Response:
+        try:
+            payload = await request.json()
+            days = int(payload["days"])
+        except Exception:  # noqa: BLE001 - malformed bodies rejected uniformly
+            return _no_store(web.json_response({"error": "invalid"}, status=400))
+        if not 1 <= days <= 730:
+            return _no_store(web.json_response({"error": "invalid"}, status=400))
+        cleared = coordinator.reset_backfill(days)
+        # Kick off a re-fetch run immediately so the user does not need a
+        # second click; the run re-backfills the cleared days.
+        coordinator.run_now("manual")
+        return _no_store(web.json_response({"cleared": cleared}))
+
     async def index(request: web.Request) -> web.Response:
         payload = build_status_payload(coordinator.snapshot())
         return _no_store(
@@ -625,6 +671,7 @@ def create_app(coordinator: Any, verification: Any = None) -> web.Application:
     app.router.add_get("/", index)
     app.router.add_get("/api/status", status)
     app.router.add_post("/api/run", run_now)
+    app.router.add_post("/api/reset-backfill", reset_backfill)
     app.router.add_get("/health", health)
     if verification is not None:
         app.router.add_get("/verify", verify_page)

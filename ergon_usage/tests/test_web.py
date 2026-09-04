@@ -115,6 +115,11 @@ class FakeCoordinator:
         self.runs.append(reason)
         self.busy = False
 
+    def reset_backfill(self, days: int) -> int:
+        self.resets: list[int] = getattr(self, "resets", [])
+        self.resets.append(days)
+        return days
+
 
 @pytest.fixture
 def coordinator():
@@ -213,6 +218,31 @@ async def test_run_now_executes_real_coordinator_run(
 async def test_get_run_is_not_allowed(aiohttp_client_factory, coordinator):
     client = await aiohttp_client_factory(create_app(coordinator))
     response = await client.get("/api/run")
+    assert response.status == 405
+
+
+@pytest.mark.asyncio
+async def test_reset_backfill_clears_and_triggers_run(aiohttp_client_factory, coordinator):
+    client = await aiohttp_client_factory(create_app(coordinator))
+    response = await client.post(
+        "/api/reset-backfill", json={"days": 14}
+    )
+    assert response.status == 200
+    assert (await response.json()) == {"cleared": 14}
+    assert coordinator.resets == [14]
+    # The endpoint also triggers a re-fetch run.
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert coordinator.runs == ["manual"]
+
+
+@pytest.mark.asyncio
+async def test_reset_backfill_rejects_invalid_days(aiohttp_client_factory, coordinator):
+    client = await aiohttp_client_factory(create_app(coordinator))
+    for payload in ({"days": 0}, {"days": 731}, {"days": "x"}, {}):
+        response = await client.post("/api/reset-backfill", json=payload)
+        assert response.status == 400
+    response = await client.get("/api/reset-backfill")
     assert response.status == 405
 
 
