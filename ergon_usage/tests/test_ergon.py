@@ -141,6 +141,12 @@ class FakePage:
                 for selector in self.visible_selectors
             ) else 0
             return FakePage._Locator(count)
+        # A comma-joined selector matches if ANY of its parts is visible
+        # (mirrors real CSS selector-list semantics used by _classify).
+        if ", " in selector:
+            parts = selector.split(", ")
+            matched = sum(1 for part in parts if part in self.visible_selectors)
+            return FakePage._Locator(1 if matched else 0)
         return FakePage._Locator(1 if selector in self.visible_selectors else 0)
 
     class _HeadingLocator:
