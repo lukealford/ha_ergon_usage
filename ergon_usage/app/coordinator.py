@@ -291,13 +291,18 @@ class Coordinator:
             # No portal access at all: recompute from the ledger (which
             # already holds every fetched reading and rate) and re-import
             # the complete history to Home Assistant.
-            # self._tariffs is only populated by portal fetches; a fresh
-            # process has it empty, so recover the tariff list from the
-            # ledger instead of silently importing nothing.
+            # Both account and tariff list are only populated by portal
+            # fetches; a fresh process has neither, so recover both from
+            # the ledger instead of silently importing nothing.
+            if self._account_id is None:
+                self._account_id = self._ledger.any_account_id()
             if not self._tariffs and self._account_id is not None:
                 self._tariffs = self._ledger.distinct_tariffs(self._account_id)
+            if self._account_id is not None and not self._tariffs:
                 logger.info(
-                    "Republish: tariffs from ledger: %s.", ", ".join(self._tariffs)
+                    "Republish: account %s, tariffs from ledger: %s.",
+                    self._account_id,
+                    ", ".join(self._tariffs),
                 )
             await self._publish(errors, None)
             return RunSummary(

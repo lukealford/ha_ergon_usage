@@ -327,6 +327,16 @@ class Ledger:
         ).fetchall()
         return tuple(str(row["tariff"]) for row in rows)
 
+    def any_account_id(self) -> str | None:
+        """Return the single account with stored readings, if any."""
+
+        rows = self._connection.execute(
+            "SELECT DISTINCT account_id FROM readings"
+        ).fetchall()
+        if len(rows) != 1:
+            return None
+        return str(rows[0]["account_id"])
+
     def cost_components_from(
         self, account_id: str, tariff: str, earliest: datetime | None
     ) -> list[CostComponent]:

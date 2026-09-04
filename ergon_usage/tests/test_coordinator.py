@@ -285,8 +285,10 @@ async def test_republish_imports_all_without_portal_calls(ledger, ergon, ha):
     calls_before = len(ergon.calls)
     ha.calls.clear()
 
-    # Simulate a fresh process: tariff list discovered by fetches is gone.
+    # Simulate a fresh process: account AND tariff list discovered by
+    # fetches are gone.
     coordinator._tariffs = ()
+    coordinator._account_id = None
 
     # Republish: full re-import purely from stored data.
     assert coordinator.republish() is True
