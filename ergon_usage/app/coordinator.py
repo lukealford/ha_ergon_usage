@@ -450,9 +450,19 @@ class Coordinator:
         assert self._account_id is not None
         periods = self._ledger.rate_periods(self._account_id, tariff)
         if not periods:
+            logger.info(
+                "Costs for %s: no rate periods recorded; skipping.", tariff
+            )
             return
         readings = self._ledger.readings_from(self._account_id, tariff, None)
         components = calculate_costs(readings, periods)
+        logger.info(
+            "Costs for %s: %d rate periods, %d readings, %d components.",
+            tariff,
+            len(periods),
+            len(readings),
+            len(components),
+        )
         if earliest is None:
             if not components:
                 return
@@ -461,6 +471,11 @@ class Coordinator:
             replace_from = earliest
         applicable = [c for c in components if c.interval_start >= replace_from]
         if not applicable:
+            logger.info(
+                "Costs for %s: 0 components at/after %s; nothing to import.",
+                tariff,
+                replace_from.isoformat(),
+            )
             return
         self._ledger.replace_cost_components_from(
             self._account_id, tariff, replace_from, applicable
@@ -469,6 +484,12 @@ class Coordinator:
             self._ledger.cost_components_from(self._account_id, tariff, None)
         )
         cost_points = [p for p in all_points if p.start >= replace_from]
+        logger.info(
+            "Costs for %s: %d cost points to import (statistic %s_cost).",
+            tariff,
+            len(cost_points),
+            statistic_id(self._account_id, tariff),
+        )
         if cost_points:
             await self._import(
                 errors,
