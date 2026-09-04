@@ -325,10 +325,11 @@ class ErgonClient:
                 await page.wait_for_timeout(1_000)
                 # The chart renders asynchronously after load; wait for bar
                 # shapes before reading React props (bounded, best-effort —
-                # a non-usage page simply times out).
+                # a non-usage page simply times out).  45s: low-memory hosts
+                # render the heavy SPA chart significantly slower.
                 try:
                     await page.wait_for_selector(
-                        ".recharts-bar-rectangle", timeout=15_000
+                        ".recharts-bar-rectangle", timeout=45_000
                     )
                     await page.wait_for_timeout(1_000)
                 except Exception:  # noqa: BLE001 - not a chart page
