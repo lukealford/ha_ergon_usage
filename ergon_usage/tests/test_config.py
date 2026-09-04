@@ -105,6 +105,28 @@ def test_settings_copies_tariff_name_overrides_and_respects_data_directory(
     assert settings.data_dir == Path("/custom-data")
 
 
+def test_settings_accepts_bare_string_for_tou_tariffs(tmp_path: Path) -> None:
+    # HA's list(str) schema delivers a bare string when one value is set.
+    settings = Settings.from_file(
+        write_options(tmp_path, tou_tariffs="Tariff 11"), environment()
+    )
+    assert settings.tou_tariffs == ("Tariff 11",)
+
+
+def test_settings_accepts_list_for_tou_tariffs(tmp_path: Path) -> None:
+    settings = Settings.from_file(
+        write_options(tmp_path, tou_tariffs=["Tariff 11", "Tariff 22"]),
+        environment(),
+    )
+    assert settings.tou_tariffs == ("Tariff 11", "Tariff 22")
+
+
+def test_settings_rejects_invalid_tou_tariffs(tmp_path: Path) -> None:
+    for bad in (123, [""], [1, 2]):
+        with pytest.raises(ValueError, match="tou_tariffs"):
+            Settings.from_file(write_options(tmp_path, tou_tariffs=bad), environment())
+
+
 @pytest.mark.parametrize(
     "options_text",
     ["", "not json", "[]"],

@@ -83,6 +83,10 @@ class Settings:
             raise ValueError("backfill_current_rate must be a boolean.")
 
         tou_tariffs = values["tou_tariffs"]
+        # HA's list(str) schema delivers a bare string when a single value
+        # is entered in the UI, or a list when multiple are set.
+        if isinstance(tou_tariffs, str):
+            tou_tariffs = [tou_tariffs]
         if not isinstance(tou_tariffs, list) or not all(
             isinstance(item, str) and item.strip() for item in tou_tariffs
         ):
