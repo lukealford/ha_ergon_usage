@@ -1,5 +1,5 @@
 name: Ergon Usage
-version: "0.2.8"
+version: "0.2.9"
 slug: ergon_usage
 description: Securely collect and view Ergon electricity usage.
 url: https://github.com/lukealford/ha_ergon_usage
@@ -19,6 +19,7 @@ options:
   request_delay_seconds: 3
   retry_limit: 5
   tariff_name_overrides: "{}"
+  backfill_current_rate: false
 schema:
   ergon_email: email
   ergon_password: password
@@ -30,3 +31,6 @@ schema:
   # HA's schema language has no `dict` type; the override map is provided as
   # a JSON object string and parsed by the app ({"Tariff 11": "T11"}).
   tariff_name_overrides: str
+  # When true, usage recorded before the first observed rate boundary is
+  # priced at the current (latest) rate instead of being left uncosted.
+  backfill_current_rate: bool

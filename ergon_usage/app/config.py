@@ -22,6 +22,7 @@ _DEFAULTS = {
     "request_delay_seconds": 3,
     "retry_limit": 5,
     "tariff_name_overrides": {},
+    "backfill_current_rate": False,
 }
 
 
@@ -36,6 +37,7 @@ class Settings:
     request_delay_seconds: int
     retry_limit: int
     tariff_name_overrides: Mapping[str, str]
+    backfill_current_rate: bool
     data_dir: Path
 
     @classmethod
@@ -74,6 +76,10 @@ class Settings:
         if not all(isinstance(key, str) and isinstance(value, str) for key, value in overrides.items()):
             raise ValueError("tariff_name_overrides must contain string keys and values.")
 
+        backfill_current_rate = values["backfill_current_rate"]
+        if not isinstance(backfill_current_rate, bool):
+            raise ValueError("backfill_current_rate must be a boolean.")
+
         return cls(
             ergon_email=email,
             ergon_password=password,
@@ -84,6 +90,7 @@ class Settings:
             request_delay_seconds=values["request_delay_seconds"],
             retry_limit=values["retry_limit"],
             tariff_name_overrides=MappingProxyType(dict(overrides)),
+            backfill_current_rate=backfill_current_rate,
             data_dir=Path(environ.get("ERGON_DATA_DIR", "/data")),
         )
 

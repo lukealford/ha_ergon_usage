@@ -141,6 +141,7 @@ class FakeSettings:
         self.backfill_batch_days = 30
         self.request_delay_seconds = 1
         self.retry_limit = 2
+        self.backfill_current_rate = False
         for key, value in overrides.items():
             setattr(self, key, value)
 

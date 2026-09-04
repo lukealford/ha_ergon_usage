@@ -85,21 +85,40 @@ def _supply_dates(
 
 
 def calculate_costs(
-    readings: Sequence[UsageReading], periods: Sequence[RatePeriod]
+    readings: Sequence[UsageReading],
+    periods: Sequence[RatePeriod],
+    *,
+    backfill_current_rate: bool = False,
 ) -> list[CostComponent]:
-    """Merge per-interval usage cost and daily supply cost into components."""
+    """Merge per-interval usage cost and daily supply cost into components.
+
+    By default costing is non-retroactive: readings recorded before the
+    earliest observed rate boundary are skipped.  With
+    ``backfill_current_rate`` enabled, those earlier readings are priced at
+    the LATEST observed period's rate (the current rate), so backfilled
+    history gets an estimate instead of nothing.  Supply charges are never
+    back-dated.
+    """
 
     if readings:
         newest_usage = max(reading.interval_start for reading in readings)
     else:
         newest_usage = None
 
+    current_period: RatePeriod | None = None
+    if backfill_current_rate and periods:
+        current_period = max(
+            periods, key=lambda period: period.usage_effective_at
+        )
+
     components: dict[datetime, CostComponent] = {}
 
     for reading in readings:
         period = _select_period(periods, reading.interval_start)
         if period is None:
-            continue
+            if current_period is None:
+                continue
+            period = current_period
         usage_aud = reading.kwh * period.per_kwh_aud
         existing = components.get(reading.interval_start)
         if existing is None:
