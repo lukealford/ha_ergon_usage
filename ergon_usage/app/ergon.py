@@ -247,7 +247,9 @@ class ErgonClient:
             url = TARIFF_URL_TEMPLATE.format(account=portal.account_id)
             page = await portal.context.new_page()
             try:
-                await page.goto(url)
+                logger.info("Rates: loading %s", url)
+                await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+                logger.info("Rates: page loaded; expanding tariff accordions...")
                 # The live portal renders tariffs as collapsed accordions:
                 # expand every heading naming a tariff before reading the DOM,
                 # mirroring scripts/diagnose_rates_page.py.  Clicks are
@@ -303,7 +305,13 @@ class ErgonClient:
             page = portal.page
             try:
                 page.on("response", _capture)
-                await page.goto(self._usage_url(portal.account_id, day))
+                logger.info("Usage: loading usage page...")
+                await page.goto(
+                    self._usage_url(portal.account_id, day),
+                    wait_until="domcontentloaded",
+                    timeout=45_000,
+                )
+                logger.info("Usage: page loaded; waiting for chart data...")
                 # The usage page is a SPA: the data arrives via XHR after
                 # load.  Wait until at least one JSON response has been
                 # captured (bounded), then give rendering a moment before
