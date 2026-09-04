@@ -41,7 +41,7 @@ def test_addon_schema_ranges_match_settings_validation():
     assert schema["retry_limit"] == "int(0,10)"
     assert schema["ergon_email"] == "email"
     assert schema["ergon_password"] == "password"
-    assert schema["tariff_name_overrides"] == "dict"
+    assert schema["tariff_name_overrides"] == "str"  # JSON object string; HA schema has no dict type
 
 
 def test_build_yaml_pins_playwright_image_per_arch():

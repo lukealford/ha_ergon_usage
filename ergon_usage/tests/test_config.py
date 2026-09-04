@@ -199,7 +199,7 @@ def test_addon_metadata_declares_the_required_safe_configuration() -> None:
         "backfill_batch_days": 30,
         "request_delay_seconds": 3,
         "retry_limit": 5,
-        "tariff_name_overrides": {},
+        "tariff_name_overrides": "{}",
     }
     assert config["schema"]["ergon_password"] == "password"
     assert config["schema"]["poll_interval_hours"] == "int(6,48)"
@@ -207,3 +207,4 @@ def test_addon_metadata_declares_the_required_safe_configuration() -> None:
     assert config["schema"]["backfill_batch_days"] == "int(1,60)"
     assert config["schema"]["request_delay_seconds"] == "int(0,60)"
     assert config["schema"]["retry_limit"] == "int(0,10)"
+    assert config["schema"]["tariff_name_overrides"] == "str"

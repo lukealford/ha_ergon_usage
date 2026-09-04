@@ -58,7 +58,17 @@ class Settings:
             if isinstance(value, bool) or not isinstance(value, int) or not lower <= value <= upper:
                 raise ValueError(f"{option} must be an integer between {lower} and {upper}.")
 
+        # HA's options schema has no `dict` type: the override map arrives
+        # as a JSON object string ({"Tariff 11": "T11"}) and is parsed here.
+        # A real object is still accepted for backward compatibility.
         overrides = values["tariff_name_overrides"]
+        if isinstance(overrides, str):
+            try:
+                overrides = json.loads(overrides or "{}")
+            except json.JSONDecodeError as error:
+                raise ValueError(
+                    "tariff_name_overrides must be valid JSON."
+                ) from error
         if not isinstance(overrides, dict):
             raise ValueError("tariff_name_overrides must be an object.")
         if not all(isinstance(key, str) and isinstance(value, str) for key, value in overrides.items()):
