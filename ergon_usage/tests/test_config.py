@@ -122,9 +122,15 @@ def test_settings_accepts_list_for_tou_tariffs(tmp_path: Path) -> None:
 
 
 def test_settings_rejects_invalid_tou_tariffs(tmp_path: Path) -> None:
-    for bad in (123, [""], [1, 2]):
+    for bad in (123, [1, 2]):
         with pytest.raises(ValueError, match="tou_tariffs"):
             Settings.from_file(write_options(tmp_path, tou_tariffs=bad), environment())
+
+
+def test_settings_treats_blank_tou_tariffs_as_default(tmp_path: Path) -> None:
+    # The HA options UI submits an empty string when the field is untouched.
+    settings = Settings.from_file(write_options(tmp_path, tou_tariffs=""), environment())
+    assert settings.tou_tariffs == ("Tariff 11",)
 
 
 @pytest.mark.parametrize(

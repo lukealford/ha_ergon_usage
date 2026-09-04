@@ -84,13 +84,18 @@ class Settings:
 
         tou_tariffs = values["tou_tariffs"]
         # HA's list(str) schema delivers a bare string when a single value
-        # is entered in the UI, or a list when multiple are set.
+        # is entered in the UI, or a list when multiple are set.  The UI
+        # may also submit an empty string when the field is left blank —
+        # that means "use the default", not an error.
         if isinstance(tou_tariffs, str):
             tou_tariffs = [tou_tariffs]
-        if not isinstance(tou_tariffs, list) or not all(
-            isinstance(item, str) and item.strip() for item in tou_tariffs
-        ):
+        if not isinstance(tou_tariffs, list):
             raise ValueError("tou_tariffs must be a list of non-empty strings.")
+        if not all(isinstance(item, str) for item in tou_tariffs):
+            raise ValueError("tou_tariffs must be a list of non-empty strings.")
+        tou_tariffs = [item for item in tou_tariffs if item.strip()]
+        if not tou_tariffs:
+            tou_tariffs = list(_DEFAULTS["tou_tariffs"])
 
         return cls(
             ergon_email=email,
