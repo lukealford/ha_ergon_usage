@@ -317,7 +317,7 @@ class Coordinator:
                 gaps=self._report_gaps(),
             )
 
-        rates = await self._fetch_rates(errors)
+        rates = await self._fetch_rates_if_due(errors)
         rate_result = None
         if rates:
             rate_result = self._ledger.record_rates(rates)
@@ -338,6 +338,31 @@ class Coordinator:
             errors=tuple(errors),
             gaps=self._report_gaps(),
         )
+
+    async def _fetch_rates_if_due(
+        self, errors: list[str]
+    ) -> tuple[TariffRate, ...]:
+        """Fetch rates from the portal at most once per Brisbane day.
+
+        The gate is the DATE OF OUR LAST FETCH (persisted in the ledger),
+        NOT the portal's observation timestamp — the portal reports rates
+        with a lagging/observed timestamp that can be days old, so gating
+        on it would re-fetch on every run.
+        """
+
+        last_fetch = self._ledger.get_runtime("rates_last_fetch_date")
+        if last_fetch == self._today_brisbane().isoformat():
+            logger.info("Rates already fetched today; skipping.")
+            if not self._tariffs:
+                self._tariffs = self._ledger.distinct_tariffs(
+                    self._account_id
+                )
+            return ()
+        rates = await self._fetch_rates(errors)
+        self._ledger.set_runtime(
+            "rates_last_fetch_date", self._today_brisbane().isoformat()
+        )
+        return rates
 
     async def _fetch_rates(self, errors: list[str]) -> tuple[TariffRate, ...]:
         logger.info("Fetching tariff rates from the portal...")

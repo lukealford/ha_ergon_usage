@@ -420,6 +420,8 @@ async def test_rate_change_recalculates_costs_from_new_boundary(ledger, ergon, h
     coordinator, _ = make_recording_coordinator(FakeSettings(), ledger, ergon, ha)
     await coordinator.run_once("startup")
     ergon.change_rate("0.35")
+    # Allow the next run to fetch rates again (new Brisbane day).
+    ledger.set_runtime("rates_last_fetch_date", "2000-01-01")
     summary = await coordinator.run_once("scheduled")
     assert summary.rates_changed == 1
     assert ergon.extra_rate is not None
@@ -428,6 +430,27 @@ async def test_rate_change_recalculates_costs_from_new_boundary(ledger, ergon, h
     latest = cost_calls[-1]
     assert latest.points
     assert min(p.start for p in latest.points) >= new_boundary
+
+
+@pytest.mark.asyncio
+async def test_rates_fetched_once_per_day(ledger, ergon, ha):
+    # Second run on the SAME Brisbane day must skip the portal rate fetch.
+    coordinator, _ = make_recording_coordinator(FakeSettings(), ledger, ergon, ha)
+    await coordinator.run_once("startup")
+    rates_calls = ergon.calls.count("rates")
+    assert rates_calls == 1
+    await coordinator.run_once("scheduled")
+    assert ergon.calls.count("rates") == rates_calls
+
+
+@pytest.mark.asyncio
+async def test_rates_refetched_on_a_new_day(ledger, ergon, ha):
+    coordinator, _ = make_recording_coordinator(FakeSettings(), ledger, ergon, ha)
+    await coordinator.run_once("startup")
+    # Simulate the day rolling over: clear the persisted fetch date.
+    ledger.set_runtime("rates_last_fetch_date", "2000-01-01")
+    await coordinator.run_once("scheduled")
+    assert ergon.calls.count("rates") == 2
 
 
 @pytest.mark.asyncio
@@ -537,6 +560,15 @@ async def test_no_concurrent_runs_and_one_coalesced_followup(ledger, ergon, ha):
         return result
 
     ergon.fetch_rates = counting_fetch_rates
+    # The rate-fetch gate would normally skip the second fetch on the same
+    # day; force it due again so this test can observe two fetch cycles.
+    original_run = coordinator._run
+
+    async def run_with_gate_reset(reason):
+        ledger.set_runtime("rates_last_fetch_date", "2000-01-01")
+        return await original_run(reason)
+
+    coordinator._run = run_with_gate_reset
 
     await asyncio.wait_for(coordinator.serve(stop), timeout=5)
     assert results == [False]

@@ -265,8 +265,22 @@ class Ledger:
                     earliest_changed = _earlier(earliest_changed, boundary)
         return RateUpsertResult(changed, unchanged, earliest_changed)
 
-    def rate_periods(self, account_id: str, tariff: str) -> list[RatePeriod]:
+    def latest_rate_observation(self, account_id: str) -> datetime | None:
+        """Newest rate observation time for an account, or None."""
+
         account_id = _require_text(account_id, "account_id")
+        row = self._connection.execute(
+            """
+            SELECT MAX(observed_at) AS latest FROM tariff_rates
+            WHERE account_id = ?
+            """,
+            (account_id,),
+        ).fetchone()
+        if row is None or row["latest"] is None:
+            return None
+        return _from_timestamp(row["latest"])
+
+    def rate_periods(self, account_id: str, tariff: str) -> list[RatePeriod]:
         tariff = _require_text(tariff, "tariff")
         rows = self._connection.execute(
             """
@@ -336,6 +350,27 @@ class Ledger:
         if len(rows) != 1:
             return None
         return str(rows[0]["account_id"])
+
+    def get_runtime(self, key: str) -> str | None:
+        """Return a persisted runtime value, or None."""
+
+        row = self._connection.execute(
+            "SELECT value FROM runtime_status WHERE key = ?", (key,)
+        ).fetchone()
+        return str(row["value"]) if row is not None else None
+
+    def set_runtime(self, key: str, value: str) -> None:
+        """Persist a runtime value across restarts."""
+
+        key = _require_text(key, "key")
+        with self._transaction():
+            self._connection.execute(
+                """
+                INSERT INTO runtime_status (key, value) VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """,
+                (key, value),
+            )
 
     def cost_components_from(
         self, account_id: str, tariff: str, earliest: datetime | None
