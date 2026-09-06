@@ -5,6 +5,7 @@ import pytest
 
 from app.ledger import Ledger
 from app.models import CostComponent, RatePeriod, StatisticPoint, TariffRate, UsageReading
+from app.normalize import effective_usage_boundary
 
 
 ACCOUNT = "A-TEST"
@@ -101,11 +102,43 @@ def test_rate_observations_produce_effective_periods_and_changed_boundaries(ledg
         0,
         START + timedelta(hours=14),
     )
-    assert ledger.rate_periods(ACCOUNT, TARIFF) == [
-        RatePeriod(ACCOUNT, TARIFF, START + timedelta(hours=1), START + timedelta(hours=14), Decimal("0.28895"), Decimal("1.80508")),
-        RatePeriod(ACCOUNT, TARIFF, START + timedelta(hours=3), START + timedelta(hours=14), Decimal("0.30000"), Decimal("1.80508")),
-        RatePeriod(ACCOUNT, TARIFF, START + timedelta(hours=5), START + timedelta(hours=14), Decimal("0.30000"), Decimal("2.00000")),
-    ]
+
+
+def test_unchanged_price_reobservation_refreshes_latest_period(ledger):
+    # The portal re-observes the SAME prices with fresh timestamps; these
+    # must refresh the existing period, not create duplicates.
+    observed_1 = START + timedelta(minutes=15)
+    observed_2 = START + timedelta(hours=1, minutes=15)
+    ledger.record_rates(
+        [TariffRate(ACCOUNT, TARIFF, observed_1, Decimal("0.28895"), Decimal("1.80508"))]
+    )
+    result = ledger.record_rates(
+        [TariffRate(ACCOUNT, TARIFF, observed_2, Decimal("0.28895"), Decimal("1.80508"))]
+    )
+    assert (result.changed, result.unchanged) == (0, 1)
+    # Exactly ONE period remains, with the observation moved forward.
+    periods = ledger.rate_periods(ACCOUNT, TARIFF)
+    assert len(periods) == 1
+    assert periods[0].usage_effective_at == effective_usage_boundary(observed_2)
+
+
+def test_price_change_after_reobservations_creates_single_new_period(ledger):
+    observed_1 = START + timedelta(minutes=15)
+    observed_2 = START + timedelta(hours=1, minutes=15)
+    changed_at = START + timedelta(hours=2, minutes=15)
+    ledger.record_rates(
+        [TariffRate(ACCOUNT, TARIFF, observed_1, Decimal("0.28895"), Decimal("1.80508"))]
+    )
+    ledger.record_rates(
+        [TariffRate(ACCOUNT, TARIFF, observed_2, Decimal("0.28895"), Decimal("1.80508"))]
+    )
+    result = ledger.record_rates(
+        [TariffRate(ACCOUNT, TARIFF, changed_at, Decimal("0.30000"), Decimal("1.80508"))]
+    )
+    assert result.changed == 1
+    periods = ledger.rate_periods(ACCOUNT, TARIFF)
+    assert len(periods) == 2
+    assert periods[1].per_kwh_aud == Decimal("0.30000")
 
 
 def test_rate_periods_persist_after_reopening(ledger, tmp_path):

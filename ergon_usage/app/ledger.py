@@ -221,6 +221,15 @@ class Ledger:
         return points
 
     def record_rates(self, rates: Sequence[TariffRate]) -> RateUpsertResult:
+        """Record portal rate observations as stable rate periods.
+
+        The portal re-observes the SAME prices with a fresh timestamp on
+        every fetch.  Re-observing an unchanged price must NOT create a new
+        period: instead the latest period for that tariff is refreshed
+        (its ``observed_at`` moves forward) so cost/supply boundaries stay
+        stable.  Only a genuine price change inserts a new period.
+        """
+
         changed = unchanged = 0
         earliest_changed: datetime | None = None
         with self._transaction():
@@ -228,27 +237,55 @@ class Ledger:
                 if not isinstance(rate, TariffRate):
                     raise TypeError("rates must contain TariffRate values.")
                 observed_at = _timestamp(rate.observed_at)
-                row = self._connection.execute(
+
+                existing_at_observed = self._connection.execute(
                     """
-                    SELECT per_kwh_aud, daily_supply_aud FROM tariff_rates
+                    SELECT observed_at, per_kwh_aud, daily_supply_aud
+                    FROM tariff_rates
                     WHERE account_id = ? AND tariff = ? AND observed_at = ?
                     """,
                     (rate.account_id, rate.tariff, observed_at),
                 ).fetchone()
-                values = (str(rate.per_kwh_aud), _decimal_text(rate.daily_supply_aud))
-                if row is not None and _rate_values_match(row, rate):
+                if (
+                    existing_at_observed is not None
+                    and _rate_values_match(existing_at_observed, rate)
+                ):
                     unchanged += 1
                     continue
-                previous = self._connection.execute(
+
+                latest = self._connection.execute(
                     """
-                    SELECT per_kwh_aud, daily_supply_aud FROM tariff_rates
-                    WHERE account_id = ? AND tariff = ? AND observed_at < ?
+                    SELECT observed_at, per_kwh_aud, daily_supply_aud
+                    FROM tariff_rates
+                    WHERE account_id = ? AND tariff = ?
                     ORDER BY observed_at DESC
                     LIMIT 1
                     """,
-                    (rate.account_id, rate.tariff, observed_at),
+                    (rate.account_id, rate.tariff),
                 ).fetchone()
+                if latest is not None and _rate_values_match(latest, rate):
+                    # Same price as the latest period: refresh its
+                    # observation timestamp instead of adding a duplicate.
+                    self._connection.execute(
+                        """
+                        UPDATE tariff_rates SET observed_at = ?
+                        WHERE account_id = ? AND tariff = ? AND observed_at = ?
+                        """,
+                        (
+                            observed_at,
+                            rate.account_id,
+                            rate.tariff,
+                            latest["observed_at"],
+                        ),
+                    )
+                    unchanged += 1
+                    continue
+
                 changed += 1
+                values = (
+                    str(rate.per_kwh_aud),
+                    _decimal_text(rate.daily_supply_aud),
+                )
                 self._connection.execute(
                     """
                     INSERT INTO tariff_rates (
@@ -260,7 +297,9 @@ class Ledger:
                     """,
                     (rate.account_id, rate.tariff, observed_at, *values),
                 )
-                boundary = _rate_change_boundary(row, previous, rate)
+                boundary = _rate_change_boundary(
+                    existing_at_observed, latest, rate
+                )
                 if boundary is not None:
                     earliest_changed = _earlier(earliest_changed, boundary)
         return RateUpsertResult(changed, unchanged, earliest_changed)
