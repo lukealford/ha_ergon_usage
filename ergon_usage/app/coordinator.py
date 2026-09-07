@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 import logging
 import random
@@ -438,6 +438,35 @@ class Coordinator:
         """
 
         return self.run_now("republish")[0]
+
+    def reset_cost_data(self, day: date | None = None) -> bool:
+        """Wipe rate periods and cost components, then re-publish.
+
+        Without ``day``: deletes ALL rate periods and costs (full rebuild;
+        the next run re-fetches rates once).  With ``day``: deletes only
+        that Brisbane day's cost components and re-publishes from that
+        day — used to repair a single bad day without touching anything
+        else.  Returns True when a run was started.
+        """
+
+        if day is None:
+            cleared = self._ledger.reset_cost_data()
+            logger.info("Cost data reset: removed %d rate rows.", cleared)
+            # Force the next run to fetch fresh rates (one clean period).
+            self._ledger.set_runtime("rates_last_fetch_date", "2000-01-01")
+        else:
+            if isinstance(day, bool) or not isinstance(day, date):
+                raise ValueError("day must be a date.")
+            start = datetime.combine(day, time.min, tzinfo=BRISBANE).astimezone(
+                timezone.utc
+            )
+            end = start + timedelta(days=1)
+            self._ledger.reset_cost_data(start, end)
+            logger.info(
+                "Cost data reset for %s (cost components only).", day.isoformat()
+            )
+        accepted, _ = self.run_now("republish")
+        return accepted
 
     async def _backfill_batch(self, errors: list[str]) -> tuple[int, int]:
         today = self._today_brisbane()

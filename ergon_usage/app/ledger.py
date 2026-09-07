@@ -590,6 +590,40 @@ class Ledger:
             )
         return cleared
 
+    def reset_cost_data(
+        self, start: datetime | None = None, end: datetime | None = None
+    ) -> int:
+        """Delete rate periods and cost components; keep readings.
+
+        With no bounds, deletes ALL rate rows and cost components (full
+        rebuild on the next sync).  With ``start``/``end``, only cost
+        components inside the Brisbane-day window ``start <= t < end`` are
+        removed, and rate rows are left intact (rate boundaries outside
+        the window are unaffected).  Returns the number of rate rows
+        removed (0 when scoped to costs only).
+        """
+
+        if start is None and end is None:
+            with self._transaction():
+                rates = self._connection.execute("DELETE FROM tariff_rates")
+                self._connection.execute("DELETE FROM cost_components")
+            return rates.rowcount if rates.rowcount is not None else 0
+        if start is None or end is None:
+            raise ValueError("start and end must both be provided.")
+        start = _utc_datetime(start, "start")
+        end = _utc_datetime(end, "end")
+        if end < start:
+            raise ValueError("end must not precede start.")
+        with self._transaction():
+            self._connection.execute(
+                """
+                DELETE FROM cost_components
+                WHERE interval_start >= ? AND interval_start < ?
+                """,
+                (_timestamp(start), _timestamp(end)),
+            )
+        return 0
+
     def status(self) -> StatusSnapshot:
         rows = self._connection.execute(
             "SELECT statistic_id, through_timestamp FROM imports ORDER BY statistic_id"

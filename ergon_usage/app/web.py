@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 import html
 import json
@@ -388,10 +388,18 @@ def render_index(payload: dict[str, Any]) -> str:
         "statistics are kept.</p>"
         '<div class="toolbar" style="margin-top:4px">'
         '<button type="button" id="republish">Republish to HA</button>'
+        '<input type="date" id="cost-reset-day" '
+        'style="padding:8px;border:1px solid var(--divider-color);border-radius:8px;'
+        'background:var(--card-background-color);color:var(--primary-text-color)">'
+        '<button type="button" id="reset-costs" class="secondary">Reset cost data</button>'
         "</div>"
         '<p class="muted" style="font-size:12px;margin:6px 0 0">No portal visit: '
         "recalculates every statistic from data already stored here and "
         "re-imports the full history into Home Assistant.</p>"
+        '<p class="muted" style="font-size:12px;margin:6px 0 0">Reset cost data: '
+        "deletes costs for one day (or ALL rate periods + costs if no day "
+        "chosen) and rebuilds them. Readings are kept. Use if cost numbers "
+        "are wrong.</p>"
         "</details>"
         "</div></div>"
         + '<div class="grid" style="margin-top:12px">'
@@ -466,6 +474,22 @@ def render_index(payload: dict[str, Any]) -> str:
         "  try { await fetch('./api/republish', {method: 'POST'}); } catch (e) {}"
         "  setRunning(true); pollPhase();"
         "  btn.disabled = false; btn.textContent = 'Republish to HA';"
+        "});"
+        "document.getElementById('reset-costs').addEventListener('click', async () => {"
+        "  const btn = document.getElementById('reset-costs');"
+        "  const dayVal = document.getElementById('cost-reset-day').value;"
+        "  const msg = dayVal"
+        "    ? 'Delete costs for ' + dayVal + ' and rebuild them? Readings are kept.'"
+        "    : 'Delete ALL rate periods and costs, then rebuild? Readings are kept.';"
+        "  if (!confirm(msg)) return;"
+        "  btn.disabled = true; btn.textContent = 'Resetting…';"
+        "  try {"
+        "    await fetch('./api/reset-cost-data', {method: 'POST',"
+        "      headers: {'Content-Type': 'application/json'},"
+        "      body: JSON.stringify(dayVal ? {day: dayVal} : {})});"
+        "  } catch (e) {}"
+        "  setRunning(true); pollPhase();"
+        "  btn.disabled = false; btn.textContent = 'Reset cost data';"
         "});"
         "</script>"
     )
@@ -615,6 +639,23 @@ def create_app(coordinator: Any, verification: Any = None) -> web.Application:
             web.json_response({"accepted": accepted}, status=202)
         )
 
+    async def reset_cost_data(request: web.Request) -> web.Response:
+        try:
+            payload = await request.json()
+        except Exception:  # noqa: BLE001 - empty body means full reset
+            payload = {}
+        day: date | None = None
+        raw_day = payload.get("day") if isinstance(payload, dict) else None
+        if raw_day is not None:
+            try:
+                day = date.fromisoformat(str(raw_day))
+            except ValueError:
+                return _no_store(web.json_response({"error": "invalid"}, status=400))
+        accepted = coordinator.reset_cost_data(day)
+        return _no_store(
+            web.json_response({"accepted": accepted}, status=202)
+        )
+
     async def index(request: web.Request) -> web.Response:
         payload = build_status_payload(coordinator.snapshot())
         return _no_store(
@@ -692,6 +733,7 @@ def create_app(coordinator: Any, verification: Any = None) -> web.Application:
     app.router.add_post("/api/run", run_now)
     app.router.add_post("/api/reset-backfill", reset_backfill)
     app.router.add_post("/api/republish", republish)
+    app.router.add_post("/api/reset-cost-data", reset_cost_data)
     app.router.add_get("/health", health)
     if verification is not None:
         app.router.add_get("/verify", verify_page)

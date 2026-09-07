@@ -125,6 +125,11 @@ class FakeCoordinator:
         self.republishes.append(True)
         return True
 
+    def reset_cost_data(self, day: object = None) -> bool:
+        self.cost_resets: list[object] = getattr(self, "cost_resets", [])
+        self.cost_resets.append(day)
+        return True
+
 
 @pytest.fixture
 def coordinator():
@@ -258,6 +263,15 @@ async def test_republish_triggers_run(aiohttp_client_factory, coordinator):
     assert response.status == 202
     assert (await response.json()) == {"accepted": True}
     assert coordinator.republishes == [True]
+
+
+@pytest.mark.asyncio
+async def test_reset_cost_data_triggers_run(aiohttp_client_factory, coordinator):
+    client = await aiohttp_client_factory(create_app(coordinator))
+    response = await client.post("/api/reset-cost-data")
+    assert response.status == 202
+    assert (await response.json()) == {"accepted": True}
+    assert coordinator.cost_resets == [None]
 
 
 @pytest.mark.asyncio
