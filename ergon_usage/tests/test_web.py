@@ -125,10 +125,13 @@ class FakeCoordinator:
         self.republishes.append(True)
         return True
 
-    def reset_cost_data(self, day: object = None) -> bool:
+    async def reset_cost_data(self, day: object = None) -> bool:
         self.cost_resets: list[object] = getattr(self, "cost_resets", [])
         self.cost_resets.append(day)
         return True
+
+    async def reset_cost_data_async(self, day: object = None) -> bool:
+        return self.reset_cost_data(day)
 
 
 @pytest.fixture

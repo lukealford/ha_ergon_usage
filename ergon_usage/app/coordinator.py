@@ -458,14 +458,14 @@ class Coordinator:
 
         return self.run_now("republish")[0]
 
-    def reset_cost_data(self, day: date | None = None) -> bool:
+    async def reset_cost_data(self, day: date | None = None) -> bool:
         """Wipe rate periods and cost components, then re-publish.
 
-        Without ``day``: deletes ALL rate periods and costs (full rebuild;
-        the next run re-fetches rates once).  With ``day``: deletes only
-        that Brisbane day's cost components and re-publishes from that
-        day — used to repair a single bad day without touching anything
-        else.  Returns True when a run was started.
+        Without ``day``: deletes ALL rate periods and costs, CLEARS the
+        cost statistics in HA (orphaned rows from corrupt imports survive
+        plain re-imports), and schedules a full rebuild.  With ``day``:
+        deletes only that Brisbane day's cost components and re-publishes
+        from that day.  Returns True when a run was started.
         """
 
         if day is None:
@@ -475,6 +475,33 @@ class Coordinator:
             # and republish the FULL history once they exist.
             self._ledger.set_runtime("rates_last_fetch_date", "2000-01-01")
             self._ledger.set_runtime("full_republish_pending", "1")
+            # HA keeps orphaned statistic rows from earlier corrupt imports
+            # (timestamps the clean ledger no longer produces).  Delete the
+            # cost statistics entirely; the next republish recreates them.
+            if self._account_id is None:
+                self._account_id = self._ledger.any_account_id()
+            if self._account_id is not None:
+                if not self._tariffs:
+                    self._tariffs = self._ledger.distinct_tariffs(self._account_id)
+                cost_ids = [
+                    statistic_id(self._account_id, tariff) + "_cost"
+                    for tariff in self._tariffs
+                ]
+                cost_ids += [
+                    tou_statistic_id(self._account_id, t, w) + "_cost"
+                    for t in self._settings.tou_tariffs
+                    for w in TOU_WINDOWS
+                ]
+                try:
+                    await self._home_assistant.clear_statistics(cost_ids)
+                    logger.info(
+                        "Cleared %d cost statistics in HA: %s",
+                        len(cost_ids),
+                        ", ".join(cost_ids),
+                    )
+                except ErgonError as error:
+                    errors = [self._sanitize(error)]
+                    logger.warning("Clearing statistics failed: %s", errors[0])
         else:
             if isinstance(day, bool) or not isinstance(day, date):
                 raise ValueError("day must be a date.")

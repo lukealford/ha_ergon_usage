@@ -84,6 +84,42 @@ class HomeAssistantClient:
             _LOGGER.debug("Statistics import connection failed: %s", type(error).__name__)
             raise ImportError("Unable to connect to Home Assistant to import statistics.") from error
 
+    async def clear_statistics(self, statistic_ids: Sequence[str]) -> None:
+        """Delete the given statistics from Home Assistant's recorder.
+
+        Uses ``recorder/clear_statistics`` (WebSocket-only).  Used after a
+        cost-data reset so orphaned rows from earlier corrupt imports do
+        not survive alongside the rebuilt points.
+        """
+
+        if not statistic_ids:
+            return
+        timeout = aiohttp.ClientTimeout(total=self._connect_timeout)
+        try:
+            async with self._session_factory(timeout=timeout) as session:
+                async with session.ws_connect(
+                    self._base_url,
+                    headers={"Authorization": f"Bearer {self._token}"},
+                    timeout=aiohttp.ClientWSTimeout(ws_close=self._connect_timeout),
+                ) as ws:
+                    await self._authenticate(ws)
+                    command = {
+                        "id": 1,
+                        "type": "recorder/clear_statistics",
+                        "statistic_ids": list(statistic_ids),
+                    }
+                    await ws.send_json(command)
+                    message = await self._receive_json(ws)
+        except ImportError:
+            raise
+        except (aiohttp.ClientError, ConnectionError, OSError) as error:
+            _LOGGER.debug("Clear statistics connection failed: %s", type(error).__name__)
+            raise ImportError("Unable to connect to Home Assistant to clear statistics.") from error
+        if message.get("type") != "result" or message.get("id") != command["id"]:
+            raise ImportError("Home Assistant returned an unexpected response while clearing statistics.")
+        if not message.get("success"):
+            raise ImportError("Home Assistant reported an error clearing statistics.")
+
     async def _authenticate(self, ws: aiohttp.ClientWebSocketResponse) -> None:
         message = await self._receive_json(ws)
         if message.get("type") != "auth_required":

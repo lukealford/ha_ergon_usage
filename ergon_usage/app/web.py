@@ -651,7 +651,7 @@ def create_app(coordinator: Any, verification: Any = None) -> web.Application:
                 day = date.fromisoformat(str(raw_day))
             except ValueError:
                 return _no_store(web.json_response({"error": "invalid"}, status=400))
-        accepted = coordinator.reset_cost_data(day)
+        accepted = await coordinator.reset_cost_data(day)
         return _no_store(
             web.json_response({"accepted": accepted}, status=202)
         )
