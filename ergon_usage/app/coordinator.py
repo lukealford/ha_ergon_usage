@@ -324,6 +324,18 @@ class Coordinator:
             if rate_result.changed:
                 rate_boundary = rate_result.earliest_affected_boundary
 
+        # After a full cost reset, the first run that successfully fetched
+        # fresh rates must republish the ENTIRE history to HA (the earlier
+        # reset-time republish ran before rates existed and could not
+        # rebuild costs).
+        if self._ledger.get_runtime("full_republish_pending") == "1" and rates:
+            logger.info(
+                "Cost reset recovery: republishing full history now that "
+                "rates are available."
+            )
+            self._ledger.set_runtime("full_republish_pending", "0")
+            await self._publish(errors, None)
+
         upsert = await self._sync_rolling(errors, rate_boundary)
 
         processed, failed = await self._backfill_batch(errors)
@@ -459,8 +471,10 @@ class Coordinator:
         if day is None:
             cleared = self._ledger.reset_cost_data()
             logger.info("Cost data reset: removed %d rate rows.", cleared)
-            # Force the next run to fetch fresh rates (one clean period).
+            # Force the next run to fetch fresh rates (one clean period),
+            # and republish the FULL history once they exist.
             self._ledger.set_runtime("rates_last_fetch_date", "2000-01-01")
+            self._ledger.set_runtime("full_republish_pending", "1")
         else:
             if isinstance(day, bool) or not isinstance(day, date):
                 raise ValueError("day must be a date.")
