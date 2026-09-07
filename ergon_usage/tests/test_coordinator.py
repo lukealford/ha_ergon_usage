@@ -444,6 +444,30 @@ async def test_rates_fetched_once_per_day(ledger, ergon, ha):
 
 
 @pytest.mark.asyncio
+async def test_failed_rate_fetch_does_not_arm_the_gate(ledger, ergon, ha):
+    # A WAF/auth failure on the first run must NOT count as "fetched
+    # today": the next run retries the fetch.
+    coordinator, _ = make_recording_coordinator(FakeSettings(), ledger, ergon, ha)
+
+    original_fetch_rates = ergon.fetch_rates
+
+    async def failing_fetch_rates():
+        ergon.calls.append("rates")
+        raise AuthenticationError()
+
+    ergon.fetch_rates = failing_fetch_rates
+    summary = await coordinator.run_once("startup")
+    assert summary.errors
+    assert ledger.get_runtime("rates_last_fetch_date") is None
+
+    # Next run: portal reachable again, rates fetched and gate armed.
+    ergon.fetch_rates = original_fetch_rates
+    await coordinator.run_once("scheduled")
+    assert ergon.calls.count("rates") == 2
+    assert ledger.get_runtime("rates_last_fetch_date") is not None
+
+
+@pytest.mark.asyncio
 async def test_rates_refetched_on_a_new_day(ledger, ergon, ha):
     coordinator, _ = make_recording_coordinator(FakeSettings(), ledger, ergon, ha)
     await coordinator.run_once("startup")

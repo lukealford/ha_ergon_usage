@@ -359,6 +359,10 @@ class Coordinator:
                 )
             return ()
         rates = await self._fetch_rates(errors)
+        if not rates:
+            # Fetch failed (e.g. WAF/auth): do NOT arm the gate, so the
+            # next run retries the fetch once the portal is reachable.
+            return ()
         self._ledger.set_runtime(
             "rates_last_fetch_date", self._today_brisbane().isoformat()
         )
