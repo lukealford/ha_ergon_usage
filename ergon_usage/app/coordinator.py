@@ -351,7 +351,10 @@ class Coordinator:
         """
 
         last_fetch = self._ledger.get_runtime("rates_last_fetch_date")
-        if last_fetch == self._today_brisbane().isoformat():
+        if (
+            last_fetch == self._today_brisbane().isoformat()
+            and self._account_id is not None
+        ):
             logger.info("Rates already fetched today; skipping.")
             if not self._tariffs:
                 self._tariffs = self._ledger.distinct_tariffs(
