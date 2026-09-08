@@ -49,7 +49,25 @@ add the local path as a repository instead.)
 | `backfill_batch_days`   | int      | 1–60     | 30      | Days per backfill batch per run.                            |
 | `request_delay_seconds` | int      | 0–60     | 3       | Delay between portal requests.                              |
 | `retry_limit`           | int      | 0–10     | 5       | Retries per failed portal request.                          |
-| `tariff_name_overrides` | dict     | —        | `{}`    | Map Ergon tariff names to friendly statistic names.         |
+| `tariff_name_overrides` | str     | —        | `{}`     | JSON map of Ergon tariff names to friendly statistic names. |
+| `backfill_current_rate` | bool     | —        | `false`  | Price usage recorded before the first observed rate boundary at the current rate (estimate). |
+| `tou_tariffs`           | str      | —        | `Tariff 11` | Comma-separated tariffs split into off-peak (9pm–11am), daytime (11am–4pm), and peak (4pm–9pm) statistics. |
+| `supply_start_date`     | str      | YYYY-MM-DD | *(blank)* | Back-charge the daily supply charge from this date so HA's period total reconciles with your Ergon bill. |
+
+### Billing-period reconciliation (`supply_start_date`)
+
+Ergon bills are monthly with a fixed period day (e.g. the 11th → the 10th).
+HA can only charge supply from the day rates were first observed, so the
+first bill period after installing the add-on will be missing supply
+charges for earlier days. Set `supply_start_date` to your current billing
+period's start date (e.g. `2026-08-11`) and reset cost data once (Web UI →
+Maintenance → Reset cost data, leave the day empty): every complete date
+from that date is charged the observed daily supply rate.
+
+On each subsequent bill rollover, update `supply_start_date` to the new
+period's start date and reset cost data again. Going forward — once every
+day of a period has been observed — no reset is needed; the daily supply
+charge accrues automatically.
 
 ## Safe first-run procedure (recommended)
 
