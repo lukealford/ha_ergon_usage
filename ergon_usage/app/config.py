@@ -26,6 +26,7 @@ _DEFAULTS = {
     "backfill_current_rate": False,
     "tou_tariffs": ["Tariff 11"],
     "supply_start_date": "",
+    "bill_day_of_month": 0,
 }
 
 
@@ -43,6 +44,7 @@ class Settings:
     backfill_current_rate: bool
     tou_tariffs: tuple[str, ...]
     supply_start_date: date | None
+    bill_day_of_month: int
     data_dir: Path
 
     @classmethod
@@ -109,6 +111,12 @@ class Settings:
         else:
             raise ValueError("supply_start_date must be YYYY-MM-DD.")
 
+        bill_day = values["bill_day_of_month"]
+        if isinstance(bill_day, bool) or not isinstance(bill_day, int):
+            raise ValueError("bill_day_of_month must be an integer.")
+        if not 0 <= bill_day <= 28:
+            raise ValueError("bill_day_of_month must be between 0 and 28.")
+
         return cls(
             ergon_email=email,
             ergon_password=password,
@@ -122,6 +130,7 @@ class Settings:
             backfill_current_rate=backfill_current_rate,
             tou_tariffs=tuple(tou_tariffs),
             supply_start_date=supply_start_date,
+            bill_day_of_month=bill_day,
             data_dir=Path(environ.get("ERGON_DATA_DIR", "/data")),
         )
 

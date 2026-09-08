@@ -1,5 +1,5 @@
 name: Ergon Usage
-version: "0.4.14"
+version: "0.5.0"
 slug: ergon_usage
 description: Securely collect and view Ergon electricity usage.
 url: https://github.com/lukealford/ha_ergon_usage
@@ -28,6 +28,10 @@ options:
   # date (e.g. the start of your billing period) to reconcile HA costs
   # with your Ergon bill.  Blank = charge supply from first observation.
   supply_start_date: ""
+  # Day of month your Ergon bill period starts (1-28).  Set this and the
+  # add-on automatically reconciles supply costs each billing rollover —
+  # no monthly maintenance.  0 = disabled (use supply_start_date).
+  bill_day_of_month: 0
 schema:
   ergon_email: email
   ergon_password: password
@@ -47,3 +51,5 @@ schema:
   tou_tariffs: str
   # Back-charge daily supply from this date (YYYY-MM-DD). Blank = off.
   supply_start_date: str?
+  # Day of month the bill period starts (1-28); 0 = disabled.
+  bill_day_of_month: int(0,28)

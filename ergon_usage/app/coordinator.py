@@ -324,6 +324,11 @@ class Coordinator:
             if rate_result.changed:
                 rate_boundary = rate_result.earliest_affected_boundary
 
+        # Billing-period rollover (bill_day_of_month): reconcile supply
+        # costs once per period so HA tracks the CURRENT bill.
+        if self._account_id is not None:
+            await self._maybe_rollover_supply_period()
+
         # After a full cost reset, the first run that successfully fetched
         # fresh rates must republish the ENTIRE history to HA (the earlier
         # reset-time republish ran before rates existed and could not
@@ -515,6 +520,74 @@ class Coordinator:
             )
         accepted, _ = self.run_now("republish")
         return accepted
+
+    def _current_supply_period_start(self) -> date:
+        """Start date of the current billing period (Brisbane local).
+
+        With ``bill_day_of_month`` set, the period starts on that day of
+        the month (clamped to the month's length for short months).  With
+        only ``supply_start_date`` set, that fixed date is used verbatim.
+        With neither, supply simply starts at first observation.
+        """
+
+        import calendar
+
+        bill_day = self._settings.bill_day_of_month
+        if not bill_day:
+            if self._settings.supply_start_date is not None:
+                return self._settings.supply_start_date
+            raise ValueError("No billing period configuration.")
+        today = self._today_brisbane()
+        if today.day >= bill_day:
+            return today.replace(day=bill_day)
+        # Earlier in the month: period started last month.
+        previous = today.replace(day=1) - timedelta(days=1)
+        day = min(bill_day, calendar.monthrange(previous.year, previous.month)[1])
+        return previous.replace(day=day)
+
+    async def _maybe_rollover_supply_period(self) -> None:
+        """Reconcile supply when the billing period rolls over.
+
+        With ``bill_day_of_month`` configured: when the computed period
+        start differs from the last reconciled one, delete cost
+        components from the new period start onward and re-publish, so
+        HA's running total always reflects the CURRENT bill period — no
+        manual monthly date updates.
+        """
+
+        if self._settings.bill_day_of_month:
+            return
+        try:
+            period_start = self._current_supply_period_start()
+        except ValueError:
+            return
+        last = self._ledger.last_supply_period_start()
+        if last == period_start.isoformat():
+            return
+        logger.info(
+            "Billing period rolled over to %s; reconciling supply costs.",
+            period_start.isoformat(),
+        )
+        self._ledger.set_supply_period_start(period_start.isoformat())
+        start = datetime.combine(
+            period_start, time.min, tzinfo=BRISBANE
+        ).astimezone(timezone.utc)
+        self._ledger.reset_cost_data(start, start + timedelta(days=400))
+        accepted, _ = self.run_now("republish")
+        if accepted:
+            logger.info("Billing period reconciliation run scheduled.")
+
+    def _effective_supply_start_date(self) -> date | None:
+        """Supply catch-up start date honoring bill-day auto mode.
+
+        With ``bill_day_of_month`` set, the catch-up date is the current
+        billing period's start (recomputed each run).  Otherwise the
+        fixed ``supply_start_date`` applies.
+        """
+
+        if self._settings.bill_day_of_month:
+            return self._current_supply_period_start()
+        return self._settings.supply_start_date
 
     async def _backfill_batch(self, errors: list[str]) -> tuple[int, int]:
         today = self._today_brisbane()
@@ -751,7 +824,7 @@ class Coordinator:
             readings,
             periods,
             backfill_current_rate=self._settings.backfill_current_rate,
-            supply_start_date=self._settings.supply_start_date,
+            supply_start_date=self._effective_supply_start_date(),
         )
         logger.info(
             "Costs for %s: %d rate periods, %d readings, %d components.",

@@ -53,21 +53,27 @@ add the local path as a repository instead.)
 | `backfill_current_rate` | bool     | —        | `false`  | Price usage recorded before the first observed rate boundary at the current rate (estimate). |
 | `tou_tariffs`           | str      | —        | `Tariff 11` | Comma-separated tariffs split into off-peak (9pm–11am), daytime (11am–4pm), and peak (4pm–9pm) statistics. |
 | `supply_start_date`     | str      | YYYY-MM-DD | *(blank)* | Back-charge the daily supply charge from this date so HA's period total reconciles with your Ergon bill. |
+| `bill_day_of_month`     | int      | 0–28    | `0`      | Day of month your Ergon bill period starts. Set this and supply costs automatically reconcile each billing rollover — no monthly maintenance. Overrides `supply_start_date`. |
 
-### Billing-period reconciliation (`supply_start_date`)
+### Billing-period reconciliation (`bill_day_of_month`)
 
 Ergon bills are monthly with a fixed period day (e.g. the 11th → the 10th).
 HA can only charge supply from the day rates were first observed, so the
 first bill period after installing the add-on will be missing supply
-charges for earlier days. Set `supply_start_date` to your current billing
-period's start date (e.g. `2026-08-11`) and reset cost data once (Web UI →
-Maintenance → Reset cost data, leave the day empty): every complete date
-from that date is charged the observed daily supply rate.
+charges for earlier days.
 
-On each subsequent bill rollover, update `supply_start_date` to the new
-period's start date and reset cost data again. Going forward — once every
-day of a period has been observed — no reset is needed; the daily supply
-charge accrues automatically.
+**Recommended setup:** set `bill_day_of_month` to your period's start day
+(e.g. `11`). The add-on then automatically:
+
+1. Computes the current billing period start each run (handling short
+   months by clamping to the month's last day).
+2. Back-charges the daily supply rate from that period start.
+3. On each billing rollover, reconciles costs once so HA's running total
+   always reflects the **current** bill period — no manual date updates.
+
+The alternative `supply_start_date` pins a fixed date (e.g.
+`2026-08-11`); you would update it and reset cost data manually each
+rollover. Prefer `bill_day_of_month`.
 
 ## Safe first-run procedure (recommended)
 

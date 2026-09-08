@@ -150,6 +150,7 @@ class FakeSettings:
         self.backfill_current_rate = False
         self.tou_tariffs = ("Tariff 11",)
         self.supply_start_date = None
+        self.bill_day_of_month = 0
         for key, value in overrides.items():
             setattr(self, key, value)
 
