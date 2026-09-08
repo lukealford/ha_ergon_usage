@@ -231,6 +231,7 @@ def test_addon_metadata_declares_the_required_safe_configuration() -> None:
         "tariff_name_overrides": "{}",
         "backfill_current_rate": False,
         "tou_tariffs": "Tariff 11",
+        "supply_start_date": "",
     }
     assert config["schema"]["ergon_password"] == "password"
     assert config["schema"]["poll_interval_hours"] == "int(6,48)"
@@ -241,3 +242,4 @@ def test_addon_metadata_declares_the_required_safe_configuration() -> None:
     assert config["schema"]["tariff_name_overrides"] == "str"
     assert config["schema"]["backfill_current_rate"] == "bool"
     assert config["schema"]["tou_tariffs"] == "str"
+    assert config["schema"]["supply_start_date"] == "str?"

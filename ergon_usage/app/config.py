@@ -1,6 +1,7 @@
 """Configuration loading and validation for the Ergon Usage add-on."""
 
 from dataclasses import dataclass
+from datetime import date
 import json
 from pathlib import Path
 from types import MappingProxyType
@@ -24,6 +25,7 @@ _DEFAULTS = {
     "tariff_name_overrides": {},
     "backfill_current_rate": False,
     "tou_tariffs": ["Tariff 11"],
+    "supply_start_date": "",
 }
 
 
@@ -40,6 +42,7 @@ class Settings:
     tariff_name_overrides: Mapping[str, str]
     backfill_current_rate: bool
     tou_tariffs: tuple[str, ...]
+    supply_start_date: date | None
     data_dir: Path
 
     @classmethod
@@ -93,6 +96,19 @@ class Settings:
             item.strip() for item in tou_tariffs.split(",") if item.strip()
         ] or list(_DEFAULTS["tou_tariffs"])
 
+        supply_start_raw = values["supply_start_date"]
+        if supply_start_raw in (None, ""):
+            supply_start_date = None
+        elif isinstance(supply_start_raw, str):
+            try:
+                supply_start_date = date.fromisoformat(supply_start_raw)
+            except ValueError as error:
+                raise ValueError(
+                    "supply_start_date must be YYYY-MM-DD."
+                ) from error
+        else:
+            raise ValueError("supply_start_date must be YYYY-MM-DD.")
+
         return cls(
             ergon_email=email,
             ergon_password=password,
@@ -105,6 +121,7 @@ class Settings:
             tariff_name_overrides=MappingProxyType(dict(overrides)),
             backfill_current_rate=backfill_current_rate,
             tou_tariffs=tuple(tou_tariffs),
+            supply_start_date=supply_start_date,
             data_dir=Path(environ.get("ERGON_DATA_DIR", "/data")),
         )
 

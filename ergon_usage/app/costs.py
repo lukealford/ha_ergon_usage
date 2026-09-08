@@ -8,7 +8,7 @@ even when that date has no midnight energy reading.  Components sharing an
 interval are merged, and costs are never rounded internally.
 """
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Sequence
 
@@ -16,7 +16,6 @@ from .models import CostComponent, RatePeriod, StatisticPoint, UsageReading
 from .normalize import BRISBANE, UTC
 
 ZERO = Decimal(0)
-
 
 def _select_period(
     periods: Sequence[RatePeriod], interval_start: datetime
@@ -49,6 +48,7 @@ def _supply_dates(
     period: RatePeriod,
     newest_usage: datetime,
     superseded_at: datetime | None = None,
+    catchup_from: "date | None" = None,
 ) -> list[datetime]:
     """Brisbane midnights for each complete eligible date, UTC values.
 
@@ -64,6 +64,9 @@ def _supply_dates(
     # The supply boundary is already the first Brisbane midnight strictly
     # after observation; that midnight opens the first chargeable date.
     start_local = period.supply_effective_at.astimezone(BRISBANE)
+    if catchup_from is not None and catchup_from < start_local.date():
+        # Supply catch-up: charge from the user-configured date onward.
+        start_local = datetime.combine(catchup_from, time.min, tzinfo=BRISBANE)
     end_local = newest_usage.astimezone(BRISBANE)
     last_chargeable = datetime(
         end_local.year, end_local.month, end_local.day, tzinfo=BRISBANE
@@ -89,6 +92,7 @@ def calculate_costs(
     periods: Sequence[RatePeriod],
     *,
     backfill_current_rate: bool = False,
+    supply_start_date: "date | None" = None,
 ) -> list[CostComponent]:
     """Merge per-interval usage cost and daily supply cost into components.
 
@@ -97,7 +101,10 @@ def calculate_costs(
     ``backfill_current_rate`` enabled, those earlier readings are priced at
     the LATEST observed period's rate (the current rate), so backfilled
     history gets an estimate instead of nothing.  Supply charges are never
-    back-dated.
+    back-dated UNLESS ``supply_start_date`` is set: then every complete
+    Brisbane date from that date onward is charged at the applicable
+    period's supply rate — a catch-up for the days before the add-on
+    first observed rates (the gap versus the real bill).
     """
 
     if readings:
@@ -143,7 +150,9 @@ def calculate_costs(
             if period.daily_supply_aud is None:
                 continue
             superseded_at = _next_supply_boundary(periods, period)
-            for midnight in _supply_dates(period, newest_usage, superseded_at):
+            for midnight in _supply_dates(
+                period, newest_usage, superseded_at, supply_start_date
+            ):
                 existing = components.get(midnight)
                 supply_aud = period.daily_supply_aud
                 if existing is None:

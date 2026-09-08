@@ -1,5 +1,5 @@
 name: Ergon Usage
-version: "0.4.13"
+version: "0.4.14"
 slug: ergon_usage
 description: Securely collect and view Ergon electricity usage.
 url: https://github.com/lukealford/ha_ergon_usage
@@ -20,10 +20,14 @@ options:
   retry_limit: 5
   tariff_name_overrides: "{}"
   backfill_current_rate: false
-  # Tariffs to split into off-peak (9pm-11am), daytime (11am-4pm) and peak
+  # Tariffs to split into off-peak (9pm-11am), daytime (11am-4pm) and
   # peak (4pm-9pm) statistics.  Blank = default (Tariff 11).  Multiple
   # tariffs comma-separated.
   tou_tariffs: "Tariff 11"
+  # Optional (YYYY-MM-DD): back-charge the daily supply charge from this
+  # date (e.g. the start of your billing period) to reconcile HA costs
+  # with your Ergon bill.  Blank = charge supply from first observation.
+  supply_start_date: ""
 schema:
   ergon_email: email
   ergon_password: password
@@ -41,3 +45,5 @@ schema:
   # Tariffs to split into off-peak (9pm-11am), daytime (11am-4pm) and
   # peak (4pm-9pm) statistics, comma-separated.  Blank = default.
   tou_tariffs: str
+  # Back-charge daily supply from this date (YYYY-MM-DD). Blank = off.
+  supply_start_date: str?

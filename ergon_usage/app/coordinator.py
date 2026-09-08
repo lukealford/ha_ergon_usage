@@ -748,7 +748,10 @@ class Coordinator:
             return
         readings = self._ledger.readings_from(self._account_id, tariff, None)
         components = calculate_costs(
-            readings, periods, backfill_current_rate=self._settings.backfill_current_rate
+            readings,
+            periods,
+            backfill_current_rate=self._settings.backfill_current_rate,
+            supply_start_date=self._settings.supply_start_date,
         )
         logger.info(
             "Costs for %s: %d rate periods, %d readings, %d components.",

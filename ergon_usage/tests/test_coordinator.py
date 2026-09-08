@@ -149,6 +149,7 @@ class FakeSettings:
         self.retry_limit = 2
         self.backfill_current_rate = False
         self.tou_tariffs = ("Tariff 11",)
+        self.supply_start_date = None
         for key, value in overrides.items():
             setattr(self, key, value)
 
